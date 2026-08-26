@@ -13,7 +13,7 @@ from Entire_system.fixed_params import Parameters
 from check import Parameters as new_params
 
 from Initial_Conditions_after_running_again import Initial_Conditions
-from Next_Conditions_all_derivatives import Next_Conditions
+from Next_Conditions_all_derivatives import Next_Conditions, make_fresh_storage
 
 
 target_values = np.arange(0, 10000, 10)
@@ -203,6 +203,8 @@ def minimise_breathing(t1, t2, GV_dead, V0_dead, lambda1, lambda2, n, Pmax, Pmax
 
 
 def simulate():
+    Next_Conditions.clear()
+    Next_Conditions.update(make_fresh_storage())
     # Initial setup
     IC_current = IC_overall.copy()
 

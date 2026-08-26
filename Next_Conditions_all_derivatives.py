@@ -1,6 +1,6 @@
 import numpy as np
 
-Next_Conditions = {
+def make_fresh_storage(): return {
     "all_time": np.array([100000.0] * 80000),
     "i": np.array([0]),
     "j": np.array([0]),
@@ -213,6 +213,8 @@ Next_Conditions = {
     "PA_O2": np.pad(np.array([0.0]), (0, 3000000 - 1), mode="constant", constant_values=1e6),
     "PA_CO2": np.pad(np.array([0.0]), (0, 3000000 - 1), mode="constant", constant_values=1e6),
 }
+
+Next_Conditions = make_fresh_storage()
 
 # Next_Conditions = {
 #     "i": np.array([0]),
