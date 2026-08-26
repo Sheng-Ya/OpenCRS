@@ -77,6 +77,32 @@ def _format_max_sig_figs(value: float, sig_figs: int = 4, max_decimals: int = 3)
     return label
 
 
+def _annotate_actual_parameter_value(ax: plt.Axes, value: float) -> None:
+    """Add the actual parameter value beside its vertical marker."""
+    value = float(value)
+    if not np.isfinite(value):
+        return
+
+    x_min, x_max = ax.get_xlim()
+    if value < x_min or value > x_max:
+        return
+
+    place_right = (x_max - value) >= (value - x_min)
+    ax.annotate(
+        f"{value:.2f}",
+        xy=(value, 0.05),
+        xycoords=("data", "axes fraction"),
+        xytext=(3 if place_right else -3, 0),
+        textcoords="offset points",
+        ha="left" if place_right else "right",
+        va="bottom",
+        fontsize=ACTUAL_PARAM_LABEL_FONTSIZE,
+        color=ACTUAL_PARAM_LINE_COLOR,
+        clip_on=True,
+        zorder=5,
+    )
+
+
 def _dense_design(x: np.ndarray, knots: np.ndarray, degree: int = 3) -> np.ndarray:
     """Return the dense B-spline design matrix."""
     x = np.asarray(x, dtype=np.float64)
@@ -267,13 +293,14 @@ def main() -> None:
             x_grid[j], 0.0, posterior_f_grid[j], color=POSTERIOR_DISTRIBUTION_COLOR, alpha=0.07
         )
         ax.plot(x_grid[j], posterior_f_grid[j], color=POSTERIOR_DISTRIBUTION_COLOR, lw=1.1)
-        ax.axvline(map_sample[j], color="#7a7a7a", lw=0.9)
+        ax.axvline(map_sample[j], color=ACTUAL_PARAM_LINE_COLOR, lw=0.9)
 
         lo = max(float(prior_lower[j]), float(data_j.min()) - 1e-9)
         hi = min(float(prior_upper[j]), float(data_j.max()) + 1e-9)
         width = max(hi - lo, 1e-12)
         x_pad = X_PAD_FRAC * width
         ax.set_xlim(lo - x_pad, hi + x_pad)
+        _annotate_actual_parameter_value(ax, map_sample[j])
         ax.set_xticks([lo, hi])
         ax.xaxis.set_major_formatter(formatter)
         ax.set_yticks([])
