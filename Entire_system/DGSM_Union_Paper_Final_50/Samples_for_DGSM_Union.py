@@ -1022,7 +1022,7 @@ if __name__ == "__main__":
     # DGSM uses finite differences sampling since it is a derivative based method
     # X = finite_diff.sample(sp, 500)
     # np.save("DGSM_500_X_union_50_09_06.npy", X)
-    X = np.load("DGSM_500_X_union_50_09_06.npy")[273*300:273*400,:]
+    X = np.load("DGSM_500_X_union_50_09_06.npy")
     # A = np.load("X:\home\project\DGSM_Paper_Final_Union\Result_task_00_union_300_400.npy")
 
 
@@ -1030,7 +1030,7 @@ if __name__ == "__main__":
     print(f"Number of samples created: {len(X)}")
 
     Result = parallel_simulations(param_samples, n_jobs=64)
-    np.save(f'DGSM_500_Result_union_50_09_06_last_300_400.npy', Result)
+    np.save(f'DGSM_500_Result_union_50_09_06.npy', Result)
 
     # parser = argparse.ArgumentParser()
     # parser.add_argument("--task-id", type=int, required=True)
