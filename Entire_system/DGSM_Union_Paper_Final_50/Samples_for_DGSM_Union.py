@@ -169,6 +169,12 @@ def last_distinct_values(values, n=10):
     return np.asarray(distinct, dtype=float)
 
 
+def find_valve_edge_indices(valve_state, N):
+    cumulative = np.concatenate(([0], np.cumsum(valve_state)))
+    previous_window = cumulative[N:-1] - cumulative[:-N - 1]
+    return np.flatnonzero(valve_state[N:] & (previous_window == 0)) + N
+
+
 def has_converged(storage):
     hr_segments = last_distinct_values(ordered_store(storage, "HR_store"))
     return hr_segments.size >= 2 and np.ptp(hr_segments) < CONVERGENCE_TOLERANCE
@@ -369,72 +375,40 @@ def simulate_cpu(
     N = 50  # number of consecutive closed samples required
 
     is_open_ao = theta_ao > theta_min
-    open_idx1 = []
-    for k in range(N, len(theta_ao)):
-        if is_open_ao[k] and not np.any(is_open_ao[k - N:k]):
-            open_idx1.append(k)
-    open_idx1 = np.array(open_idx1)
+    open_idx1 = find_valve_edge_indices(is_open_ao, N)
 
     is_closed_ao = theta_ao <= theta_min
-    close_idx1 = []
-    for k in range(N, len(theta_ao)):
-        if is_closed_ao[k] and not np.any(is_closed_ao[k - N:k]):
-            close_idx1.append(k)
-    close_idx1 = np.array(close_idx1)
+    close_idx1 = find_valve_edge_indices(is_closed_ao, N)
 
     if open_idx1.size == 0 or close_idx1.size == 0:
         print("ao fail")
         return zero_state_result(), None, None, None
 
     is_open_po = theta_po > theta_min
-    open_idx2 = []
-    for k in range(N, len(theta_po)):
-        if is_open_po[k] and not np.any(is_open_po[k - N:k]):
-            open_idx2.append(k)
-    open_idx2 = np.array(open_idx2)
+    open_idx2 = find_valve_edge_indices(is_open_po, N)
 
     is_closed_po = theta_po <= theta_min
-    close_idx2 = []
-    for k in range(N, len(theta_po)):
-        if is_closed_po[k] and not np.any(is_closed_po[k - N:k]):
-            close_idx2.append(k)
-    close_idx2 = np.array(close_idx2)
+    close_idx2 = find_valve_edge_indices(is_closed_po, N)
 
     if open_idx2.size == 0 or close_idx2.size == 0:
         print("po fail")
         return zero_state_result(), None, None, None
 
     is_open_mi = theta_mi > theta_min
-    open_idx3 = []
-    for k in range(N, len(theta_mi)):
-        if is_open_mi[k] and not np.any(is_open_mi[k - N:k]):
-            open_idx3.append(k)
-    open_idx3 = np.array(open_idx3)
+    open_idx3 = find_valve_edge_indices(is_open_mi, N)
 
     is_closed_mi = theta_mi <= theta_min
-    close_idx3 = []
-    for k in range(N, len(theta_mi)):
-        if is_closed_mi[k] and not np.any(is_closed_mi[k - N:k]):
-            close_idx3.append(k)
-    close_idx3 = np.array(close_idx3)
+    close_idx3 = find_valve_edge_indices(is_closed_mi, N)
 
     if open_idx3.size == 0 or close_idx3.size == 0:
         print("mi fail")
         return zero_state_result(), None, None, None
 
     is_open_tr = theta_tr > theta_min
-    open_idx4 = []
-    for k in range(N, len(theta_tr)):
-        if is_open_tr[k] and not np.any(is_open_tr[k - N:k]):
-            open_idx4.append(k)
-    open_idx4 = np.array(open_idx4)
+    open_idx4 = find_valve_edge_indices(is_open_tr, N)
 
     is_closed_tr = theta_tr <= theta_min
-    close_idx4 = []
-    for k in range(N, len(theta_tr)):
-        if is_closed_tr[k] and not np.any(is_closed_tr[k - N:k]):
-            close_idx4.append(k)
-    close_idx4 = np.array(close_idx4)
+    close_idx4 = find_valve_edge_indices(is_closed_tr, N)
 
     if open_idx4.size == 0 or close_idx4.size == 0:
         print("tr fail")
