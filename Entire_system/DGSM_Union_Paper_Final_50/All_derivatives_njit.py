@@ -1045,7 +1045,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
             prev_flat_bit,
 
             # for targets
-            P_rv, P_la, VT_la, VT_ra, P_ra, P_lv, phi, phi_atr, V, VAflow, Q_pp, theta_ao, theta_po, theta_mi, theta_tr, dP_rv_dt, dP_lv_dt, P_peri,
+            VT_lv, VT_rv, P_sa, P_rv, P_la, VT_la, VT_ra, P_ra, P_lv, phi, phi_atr, V, VAflow, Q_pp, theta_ao, theta_po, theta_mi, theta_tr, dP_rv_dt, dP_lv_dt, P_peri,
 
             # Gas exchange outputs
             Pa_O2, Pa_CO2, Pb_CO2,
@@ -1076,52 +1076,28 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
             d_VE_integral_dt])
 
 
-def model_derivatives(
-    t, state, updates, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2,
-    exercise_start_time,
+@njit(error_model="numpy")
+def model_derivatives_njit(
+    t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters,
+    HR_store, time_since_beat_store, HR_every_store, Vu_ev_every_store,
+    Vu_sv_every_store, Vu_rmv_every_store, Vu_amv_every_store,
+    Emax_lv_every_store, Emax_rv_every_store, Vu_ev_store, Vu_sv_store,
+    Vu_rmv_store, Vu_amv_store, Emax_lv_store, Emax_rv_store, f_sp_history,
+    f_sh_history, f_v_history, f_sv_history, phi_met_history,
+    Pa_O2_art_target_every_store, Pa_CO2_art_target_every_store, Nt_store,
+    prev_flat_bit_store, finish_breath_time_store, Pa_O2_every_store,
+    Pa_CO2_every_store, Pb_CO2_every_store, PamO2_store, PamCO2_store,
+    PmbCO2_store, t1_store, t2_store, cs_t1, cs_t2, knots_1, knots_2,
+    exercise_start_time, P_sa_store, theta_ao_store, theta_po_store,
+    theta_mi_store, theta_tr_store, V_lv_store, V_rv_store, P_rv_store,
+    P_la_store, V_la_store, V_ra_store, P_ra_store, P_lv_store,
+    phi_atr_store, phi_store, tidal_store, VAflow_store, Q_pp_store,
+    dP_rv_dt_store, dP_lv_dt_store, P_peri_store,
 ):
     """
         Main model derivatives function with improved organization
         Coordinates all system computations and updates
         """
-    # ============================================================================
-    # STATE VARIABLE EXTRACTION
-    # ============================================================================
-    (  # Cardio state variables
-        VT_pa, VT_pp, VT_pv, Q_pa,
-        VT_la, VT_lv, VT_ra, VT_rv,
-        VT_sv, VT_bv, VT_hv, VT_rmv, VT_amv, P_sp, P_sa, Q_sa, VT_vc,
-        theta_ao, dtheta_ao_dt, theta_po, dtheta_po_dt, theta_mi, dtheta_mi_dt, theta_tr, dtheta_tr_dt,
-
-        # Cardio controller state variables
-        theta_change_O2_sp, theta_change_CO2_sp, theta_change_O2_sv, theta_change_CO2_sv, theta_change_O2_sh,
-        theta_change_CO2_sh, P_tilda, f_ac, f_ap, R_ep_change, R_sp_change,
-        R_rmp_n_change, R_amp_n_change, Vu_ev_change, Vu_sv_change, Vu_rmv_change, Vu_amv_change, Emax_lv_change,
-        Emax_rv_change, Ts_change, Tv_change, xb_O2, xb_CO2, xh_O2, xh_CO2, Wh, xrm_O2, xrm_CO2, xam_O2, xM, x_met,
-        P_n_current,
-
-        # Gas exchange state variables
-        Pd_1_O2, Pd_1_CO2, Pd_2_O2, Pd_2_CO2, Pd_3_O2, Pd_3_CO2, Pd_4_O2, Pd_4_CO2, Pd_5_O2, Pd_5_CO2, Pa_O2, Pa_CO2,
-        dPa_O2_dt, dPa_CO2_dt, PA_O2, PA_CO2, PCSFCO2, MRTO2, MRTCO2, CTO2, CvtCO2, CBO2, CvbCO2, MRV,
-
-        # Resp control state variable
-        VE_integral,
-    ) = state
-
-    # Input_Parameters = np.array(Input_Parameters)
-
-    (HR_store, time_since_beat_store, HR_every_store, Vu_ev_every_store, Vu_sv_every_store, Vu_rmv_every_store,
-     Vu_amv_every_store, Emax_lv_every_store, Emax_rv_every_store, Vu_ev_store, Vu_sv_store, Vu_rmv_store, Vu_amv_store,
-     Emax_lv_store, Emax_rv_store, f_sp_history, f_sh_history, f_v_history, f_sv_history, phi_met_history,
-     Pa_O2_art_target_every_store, Pa_CO2_art_target_every_store, Nt_store, prev_flat_bit_store, finish_breath_time_store, Pa_O2_every_store,
-     Pa_CO2_every_store, Pb_CO2_every_store, PamO2_store, PamCO2_store, PmbCO2_store, t1_store, t2_store) = [
-        updates[key] for key in
-        ["HR_store", "time_since_beat_store", "HR_every_store", "Vu_ev_every_store", "Vu_sv_every_store",
-         "Vu_rmv_every_store", "Vu_amv_every_store", "Emax_lv_every_store", "Emax_rv_every_store", "Vu_ev_store",
-         "Vu_sv_store", "Vu_rmv_store", "Vu_amv_store", "Emax_lv_store", "Emax_rv_store", "f_sp_store", "f_sh_store",
-         "f_v_store", "f_sv_store", "phi_met_store", "Pa_O2_art_target_every_store", "Pa_CO2_art_target_every_store", "Nt_store",
-         "prev_flat_bit_store", "finish_breath_time", "Pa_O2_every_store", "Pa_CO2_every_store", "Pb_CO2_every_store",
-         "PamO2", "PamCO2", "PmbCO2", "t1_store", "t2_store"]]
 
     (time_since_beat,
      HR, Vu_ev, Vu_sv, Vu_rmv, Vu_amv,
@@ -1130,7 +1106,7 @@ def model_derivatives(
      prev_flat_bit,
 
      # for targets
-     P_rv, P_la, VT_la, VT_ra, P_ra, P_lv, phi, phi_atr, V, VAflow, Q_pp, theta_ao, theta_po, theta_mi, theta_tr, dP_rv_dt, dP_lv_dt, P_peri,
+     VT_lv, VT_rv, P_sa, P_rv, P_la, VT_la, VT_ra, P_ra, P_lv, phi, phi_atr, V, VAflow, Q_pp, theta_ao, theta_po, theta_mi, theta_tr, dP_rv_dt, dP_lv_dt, P_peri,
 
      Pa_O2, Pa_CO2, Pb_CO2,
      PA_O2, PA_CO2, Nt,
@@ -1171,60 +1147,72 @@ def model_derivatives(
                       Pa_CO2_every_store, Pb_CO2_every_store, PamO2_store, PamCO2_store, PmbCO2_store, t1_store,
                       t2_store, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time)
 
+    store_index = (i - num_removed) % BUFFER_LIMIT
+
     # Cardiovascular Controller
     # update values needed in other systems
-    for key, new_value in zip(
-            [  # Cardio inputs
-                "time_since_beat_store",
-
-                "HR_store", "Vu_ev_store", "Vu_sv_store", "Vu_rmv_store", "Vu_amv_store",
-                "Emax_lv_store", "Emax_rv_store", "f_sp_store", "f_sh_store",
-                "f_v_store", "f_sv_store", "phi_met_store", "HR_every_store", "Vu_ev_every_store",
-                "Vu_sv_every_store", "Vu_rmv_every_store", "Vu_amv_every_store", "Emax_lv_every_store",
-                "Emax_rv_every_store", "P_sa_store", "theta_ao_store", "theta_po_store", "theta_mi_store", "theta_tr_store",
-                "V_lv_store", "V_rv_store", "P_rv_store",
-                "P_la_store", "V_la_store", "V_ra_store", "P_ra_store", "P_lv_store", "phi_atr_store", "phi_store",
-                "tidal_store", "VAflow_store", "Q_pp_store", "dP_rv_dt_store", "dP_lv_dt_store", "P_peri_store",
-                # Needed in cardio controller
-                "prev_flat_bit_store", "t1_store", "t2_store"],
-
-            [time_since_beat,
-             HR, Vu_ev, Vu_sv, Vu_rmv, Vu_amv,
-             Emax_lv, Emax_rv, f_sp, f_sh, f_v, f_sv, phi_met, HR_every, Vu_ev_every, Vu_sv_every,
-             Vu_rmv_every, Vu_amv_every, Emax_lv_every, Emax_rv_every, P_sa, theta_ao, theta_po, theta_mi, theta_tr, VT_lv, VT_rv, P_rv,
-              P_la, VT_la, VT_ra, P_ra, P_lv, phi_atr, phi, V, VAflow, Q_pp, dP_rv_dt, dP_lv_dt, P_peri,
-             prev_flat_bit, t1, t2]
-    ):
-        updates[key][((i - num_removed) % BUFFER_LIMIT)] = new_value
+    time_since_beat_store[store_index] = time_since_beat
+    HR_store[store_index] = HR
+    Vu_ev_store[store_index] = Vu_ev
+    Vu_sv_store[store_index] = Vu_sv
+    Vu_rmv_store[store_index] = Vu_rmv
+    Vu_amv_store[store_index] = Vu_amv
+    Emax_lv_store[store_index] = Emax_lv
+    Emax_rv_store[store_index] = Emax_rv
+    f_sp_history[store_index] = f_sp
+    f_sh_history[store_index] = f_sh
+    f_v_history[store_index] = f_v
+    f_sv_history[store_index] = f_sv
+    phi_met_history[store_index] = phi_met
+    HR_every_store[store_index] = HR_every
+    Vu_ev_every_store[store_index] = Vu_ev_every
+    Vu_sv_every_store[store_index] = Vu_sv_every
+    Vu_rmv_every_store[store_index] = Vu_rmv_every
+    Vu_amv_every_store[store_index] = Vu_amv_every
+    Emax_lv_every_store[store_index] = Emax_lv_every
+    Emax_rv_every_store[store_index] = Emax_rv_every
+    P_sa_store[store_index] = P_sa
+    theta_ao_store[store_index] = theta_ao
+    theta_po_store[store_index] = theta_po
+    theta_mi_store[store_index] = theta_mi
+    theta_tr_store[store_index] = theta_tr
+    V_lv_store[store_index] = VT_lv
+    V_rv_store[store_index] = VT_rv
+    P_rv_store[store_index] = P_rv
+    P_la_store[store_index] = P_la
+    V_la_store[store_index] = VT_la
+    V_ra_store[store_index] = VT_ra
+    P_ra_store[store_index] = P_ra
+    P_lv_store[store_index] = P_lv
+    phi_atr_store[store_index] = phi_atr
+    phi_store[store_index] = phi
+    tidal_store[store_index] = V
+    VAflow_store[store_index] = VAflow
+    Q_pp_store[store_index] = Q_pp
+    dP_rv_dt_store[store_index] = dP_rv_dt
+    dP_lv_dt_store[store_index] = dP_lv_dt
+    P_peri_store[store_index] = P_peri
+    prev_flat_bit_store[store_index] = prev_flat_bit
+    t1_store[store_index] = t1
+    t2_store[store_index] = t2
 
     # gas
     # update values needed in other systems
-    for key, new_value in zip(
-            [  # Resp control inputs
-                "Pa_O2_every_store", "Pa_CO2_every_store", "Pb_CO2_every_store",
-                # Histories for gas
-                "Pa_O2_art_target_every_store", "Pa_CO2_art_target_every_store", "Nt_store"
-            ],
-
-            [  # Corresponding values
-                Pa_O2, Pa_CO2, Pb_CO2,
-                Pa_O2_art_target_every, Pa_CO2_art_target_every, Nt]
-    ):
-        updates[key][((i - num_removed) % BUFFER_LIMIT)] = new_value
+    Pa_O2_every_store[store_index] = Pa_O2
+    Pa_CO2_every_store[store_index] = Pa_CO2
+    Pb_CO2_every_store[store_index] = Pb_CO2
+    Pa_O2_art_target_every_store[store_index] = Pa_O2_art_target_every
+    Pa_CO2_art_target_every_store[store_index] = Pa_CO2_art_target_every
+    Nt_store[store_index] = Nt
 
     # resp control
-    for key, new_value in zip(
-            ["finish_breath_time",
-             "PamO2", "PamCO2", "PmbCO2"],
-
-            [  # Corresponding values
-                finish_breath_time,
-                PamO2, PamCO2, PmbCO2]
-    ):
-        updates[key][((i - num_removed) % BUFFER_LIMIT)] = new_value
+    finish_breath_time_store[store_index] = finish_breath_time
+    PamO2_store[store_index] = PamO2
+    PamCO2_store[store_index] = PamCO2
+    PmbCO2_store[store_index] = PmbCO2
 
 
-    return [  # cardio derivatives
+    return np.array([  # cardio derivatives
         dVT_pa_dt, dVT_pp_dt, dVT_pv_dt, dQ_pa_dt, dVT_la_dt, dVT_lv_dt, dVT_ra_dt, dVT_rv_dt, dVT_sv_dt,
         dVT_bv_dt, dVT_hv_dt, dVT_rmv_dt, dVT_amv_dt, dP_sp_dt, dP_sa_dt, dQ_sa_dt, dVT_vc_dt,
         dtheta_ao_dt, d2theta_ao_dt2, dtheta_po_dt, d2theta_po_dt2, dtheta_mi_dt, d2theta_mi_dt2, dtheta_tr_dt,
@@ -1245,4 +1233,60 @@ def model_derivatives(
 
         # resp control derivatives
         d_VE_integral_dt
-    ]
+    ])
+
+
+_RHS_READ_KEYS = (
+    "HR_store", "time_since_beat_store", "HR_every_store",
+    "Vu_ev_every_store", "Vu_sv_every_store", "Vu_rmv_every_store",
+    "Vu_amv_every_store", "Emax_lv_every_store", "Emax_rv_every_store",
+    "Vu_ev_store", "Vu_sv_store", "Vu_rmv_store", "Vu_amv_store",
+    "Emax_lv_store", "Emax_rv_store", "f_sp_store", "f_sh_store",
+    "f_v_store", "f_sv_store", "phi_met_store",
+    "Pa_O2_art_target_every_store", "Pa_CO2_art_target_every_store",
+    "Nt_store", "prev_flat_bit_store", "finish_breath_time",
+    "Pa_O2_every_store", "Pa_CO2_every_store", "Pb_CO2_every_store",
+    "PamO2", "PamCO2", "PmbCO2", "t1_store", "t2_store",
+)
+
+_RHS_WRITE_KEYS = (
+    "P_sa_store", "theta_ao_store", "theta_po_store", "theta_mi_store",
+    "theta_tr_store", "V_lv_store", "V_rv_store", "P_rv_store",
+    "P_la_store", "V_la_store", "V_ra_store", "P_ra_store",
+    "P_lv_store", "phi_atr_store", "phi_store", "tidal_store",
+    "VAflow_store", "Q_pp_store", "dP_rv_dt_store", "dP_lv_dt_store",
+    "P_peri_store",
+)
+
+
+def make_wrapper(updates):
+    """Bind a simulation's storage arrays into a lightweight SciPy RHS."""
+    read_arrays = tuple(updates[key] for key in _RHS_READ_KEYS)
+    write_arrays = tuple(updates[key] for key in _RHS_WRITE_KEYS)
+
+    def fast_model_derivatives(
+        t, state, unused_updates, num_removed, i, BUFFER_LIMIT, all_time,
+        Input_Parameters, cs_t1, cs_t2, knots_1, knots_2,
+        exercise_start_time,
+    ):
+        return model_derivatives_njit(
+            t, state, num_removed, i, BUFFER_LIMIT, all_time,
+            Input_Parameters, *read_arrays, cs_t1, cs_t2, knots_1, knots_2,
+            exercise_start_time, *write_arrays,
+        )
+
+    return fast_model_derivatives
+
+
+def model_derivatives(
+    t, state, updates, num_removed, i, BUFFER_LIMIT, all_time,
+    Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time,
+):
+    """Compatibility entry point for callers not yet using make_wrapper."""
+    read_arrays = tuple(updates[key] for key in _RHS_READ_KEYS)
+    write_arrays = tuple(updates[key] for key in _RHS_WRITE_KEYS)
+    return model_derivatives_njit(
+        t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters,
+        *read_arrays, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time,
+        *write_arrays,
+    )
