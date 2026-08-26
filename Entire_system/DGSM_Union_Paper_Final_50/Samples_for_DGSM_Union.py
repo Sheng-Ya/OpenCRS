@@ -111,7 +111,7 @@ IC_overall = np.concatenate((IC_cardio, IC_cardio_contr, IC_gas, IC_resp_contr))
 
 def minimise_breathing(t1, t2, GV_dead, V0_dead, lambda1, lambda2, n, Pmax, Pmax_dot, E_rs, R_rs, P_ao):
     dt = 0.001 # must edit in Resp_Control_Breath_Optimiser too
-    bounds = [(0.4, 6), (0.4, 9)]  # [t1, t2]
+    bounds = [(0.5, 6), (0.5, 9)]  # [t1, t2]
     tolerance = 0.0001
 
     VAflow_vals = np.linspace(0.04, 1.6, 200)
