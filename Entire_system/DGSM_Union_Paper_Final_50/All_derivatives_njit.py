@@ -1038,7 +1038,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
     # ============================================================================
     # RETURN ALL COMPUTED VALUES
     # ============================================================================
-    return np.array([time_since_beat,
+    return (time_since_beat,
             HR, Vu_ev, Vu_sv, Vu_rmv, Vu_amv,
             Emax_lv, Emax_rv, f_sp, f_sh, f_v, f_sv, phi_met, HR_every, Vu_ev_every, Vu_sv_every,
             Vu_rmv_every, Vu_amv_every, Emax_lv_every, Emax_rv_every,
@@ -1073,7 +1073,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
             dPA_CO2_dt, dPCSFCO2_dt, dMRTO2_dt, dMRTCO2_dt, dCTO2_dt, dCvtCO2_dt, dCBO2_dt, dCvbCO2_dt, dMRV_dt,
 
             # resp control derivatives
-            d_VE_integral_dt])
+            d_VE_integral_dt)
 
 
 @njit(error_model="numpy")
@@ -1212,7 +1212,7 @@ def model_derivatives_njit(
     PmbCO2_store[store_index] = PmbCO2
 
 
-    return np.array([  # cardio derivatives
+    return np.array((  # cardio derivatives
         dVT_pa_dt, dVT_pp_dt, dVT_pv_dt, dQ_pa_dt, dVT_la_dt, dVT_lv_dt, dVT_ra_dt, dVT_rv_dt, dVT_sv_dt,
         dVT_bv_dt, dVT_hv_dt, dVT_rmv_dt, dVT_amv_dt, dP_sp_dt, dP_sa_dt, dQ_sa_dt, dVT_vc_dt,
         dtheta_ao_dt, d2theta_ao_dt2, dtheta_po_dt, d2theta_po_dt2, dtheta_mi_dt, d2theta_mi_dt2, dtheta_tr_dt,
@@ -1233,7 +1233,7 @@ def model_derivatives_njit(
 
         # resp control derivatives
         d_VE_integral_dt
-    ])
+    ))
 
 
 _RHS_READ_KEYS = (
