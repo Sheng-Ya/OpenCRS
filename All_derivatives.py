@@ -1323,7 +1323,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
     # ============================================================================
     # RETURN ALL COMPUTED VALUES
     # ============================================================================
-    return np.array([time_since_beat,
+    return np.array((time_since_beat,
              HR, Vu_ev, Vu_sv, Vu_rmv, Vu_amv,
              Emax_lv, Emax_rv, f_sp, f_sh, f_v, f_sv, phi_met, HR_every, Vu_ev_every, Vu_sv_every,
              Vu_rmv_every, Vu_amv_every, Emax_lv_every, Emax_rv_every,
@@ -1363,7 +1363,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
             sigma_Tv, CaO2, CvO2, CaCO2, CvCO2, PvtCO2, PvtO2, QT, Pa_O2_art_target_every, Pa_CO2_art_target_every, BF, TI, VT, VE_flow, dV_dt,
             CTO2, CvtO2, MRTO2, CvbO2, P_n_current, V, VD, VAflow, theta_ao, theta_tr, theta_mi, theta_po, Q_bv, Q_hv, Q_rmv, Q_sv,
             AR_mi, AR_tr, AAA, V_ev, V_sv, V_rmv, V_amv, dP_rv_dt, dP_lv_dt,P_peri, # v_r, x_r
-            ])
+            ))
 
 
 def model_derivatives(t, state, updates, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2):
