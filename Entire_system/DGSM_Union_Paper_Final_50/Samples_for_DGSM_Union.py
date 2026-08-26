@@ -12,7 +12,7 @@ import time
 
 from joblib import Parallel, delayed
 from scipy.integrate import solve_ivp
-from All_derivatives_njit import model_derivatives
+from All_derivatives_njit import make_wrapper
 from fixed_params import Parameters as Old_Parameters
 
 from Initial_Conditions_after_running_again import Initial_Conditions
@@ -36,7 +36,7 @@ MIN_MEASUREMENT_DURATION = 60
 
 # First iteration
 # get the first derivative and outputs from all the separated systems
-def combined_system(t, Initial_Conditions_numpy, Initial_Conditions_dict, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time):
+def combined_system(t, Initial_Conditions_numpy, Initial_Conditions_dict, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time, fast_model_derivatives):
 
     i = Initial_Conditions_dict["i"].item()
     actual_index = i % BUFFER_LIMIT
@@ -64,7 +64,7 @@ def combined_system(t, Initial_Conditions_numpy, Initial_Conditions_dict, num_ga
     resp_contr_state = Initial_Conditions_numpy[:idx_resp_contr]
 
     # Cardiovascular dynamics (look at separate systems by just commenting out other states, and changing IC_overall, d_combined)
-    derivatives_all = model_derivatives(t, resp_contr_state, Initial_Conditions_dict, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time)
+    derivatives_all = fast_model_derivatives(t, resp_contr_state, Initial_Conditions_dict, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time)
     all_time[(i - num_removed) % BUFFER_LIMIT] = t
     Initial_Conditions_dict["i"][0] = i - num_removed + 1
     Initial_Conditions_dict["j"][0] = Initial_Conditions_dict["j"].item() - num_removed + 1
@@ -331,6 +331,10 @@ def simulate_cpu(
      Pa_O2_lower, rise_time_atr, rise_time_ven,
      fall_time_ven, ahead1, theta_min, delta_P, r, l, V_nominal, V_scale])
 
+    # Bind the storage arrays once instead of looking them up by name during
+    # every derivative evaluation.
+    fast_model_derivatives = make_wrapper(local_updates)
+
     # Solve ODE in one go
     ODE_solution = solve_ivp(
         combined_system,
@@ -340,7 +344,7 @@ def simulate_cpu(
         method="RK23",
         rtol=1e-3,
         atol=1e-6,
-        args=(local_updates, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time)
+        args=(local_updates, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time, fast_model_derivatives)
     )
 
 
