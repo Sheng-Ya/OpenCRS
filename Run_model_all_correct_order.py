@@ -9,6 +9,7 @@ from Resp_Control_Breath_Optimiser import objective
 from scipy.signal import find_peaks, savgol_filter
 # from line_profiler import LineProfiler
 from All_derivatives import model_derivatives
+from rk23_njit import solve_rk23
 from Entire_system.fixed_params import Parameters
 from check import Parameters as new_params
 
@@ -21,9 +22,20 @@ target_values = np.arange(0, 10000, 10)
 time_saved = 0.005
 BUFFER_LIMIT = 80000
 
+# Use the fully compiled Bogacki-Shampine loop.  Set to False for a direct
+# regression comparison with SciPy's Python RK23 driver.
+USE_NJIT_RK23 = True
+
 min_time = 10 # Minimum time in seconds before checking
 max_time = 60 # Maximum time limit to avoid infinite loops
 time_step = 200  # Chunk size per solve
+
+
+def find_valve_edge_indices(valve_state, N):
+    """Find an edge preceded by N samples in the opposite valve state."""
+    cumulative = np.concatenate(([0], np.cumsum(valve_state)))
+    previous_window = cumulative[N:-1] - cumulative[:-N - 1]
+    return np.flatnonzero(valve_state[N:] & (previous_window == 0)) + N
 
 # First iteration
 # get the first derivative and outputs from all the separated systems
@@ -334,16 +346,28 @@ def simulate():
      fall_time_ven, ahead1, theta_min, delta_P, r, l, V_nominal, V_scale])
 
     # Solve ODE in one go
-    ODE_solution = solve_ivp(
-        combined_system,
-        (0, max_time),
-        IC_current,
-        max_step=0.001,
-        method="RK23",
-        rtol=1e-3,
-        atol=1e-6,
-        args=(Next_Conditions, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2)
-    )
+    if USE_NJIT_RK23:
+        ODE_solution = solve_rk23(
+            Next_Conditions,
+            (0, max_time),
+            IC_current,
+            BUFFER_LIMIT,
+            0.001,
+            1e-3,
+            1e-6,
+            Input_Parameters, cs_t1, cs_t2, knots_1, knots_2,
+        )
+    else:
+        ODE_solution = solve_ivp(
+            combined_system,
+            (0, max_time),
+            IC_current,
+            max_step=0.001,
+            method="RK23",
+            rtol=1e-3,
+            atol=1e-6,
+            args=(Next_Conditions, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2)
+        )
 
     if ODE_solution.status == -1:
         print("ODE solver failed:", ODE_solution.message)
@@ -391,60 +415,28 @@ def simulate():
     N = 50  # number of consecutive closed samples required
 
     is_open_ao = theta_ao > theta_min
-    open_idx1 = []
-    for k in range(N, len(theta_ao)):
-        if is_open_ao[k] and not np.any(is_open_ao[k - N:k]):
-            open_idx1.append(k)
-    open_idx1 = np.array(open_idx1)
+    open_idx1 = find_valve_edge_indices(is_open_ao, N)
 
     is_closed_ao = theta_ao <= theta_min
-    close_idx1 = []
-    for k in range(N, len(theta_ao)):
-        if is_closed_ao[k] and not np.any(is_closed_ao[k - N:k]):
-            close_idx1.append(k)
-    close_idx1 = np.array(close_idx1)
+    close_idx1 = find_valve_edge_indices(is_closed_ao, N)
 
     is_open_po = theta_po > theta_min
-    open_idx2 = []
-    for k in range(N, len(theta_po)):
-        if is_open_po[k] and not np.any(is_open_po[k - N:k]):
-            open_idx2.append(k)
-    open_idx2 = np.array(open_idx2)
+    open_idx2 = find_valve_edge_indices(is_open_po, N)
 
     is_closed_po = theta_po <= theta_min
-    close_idx2 = []
-    for k in range(N, len(theta_po)):
-        if is_closed_po[k] and not np.any(is_closed_po[k - N:k]):
-            close_idx2.append(k)
-    close_idx2 = np.array(close_idx2)
+    close_idx2 = find_valve_edge_indices(is_closed_po, N)
 
     is_open_mi = theta_mi > theta_min
-    open_idx3 = []
-    for k in range(N, len(theta_mi)):
-        if is_open_mi[k] and not np.any(is_open_mi[k - N:k]):
-            open_idx3.append(k)
-    open_idx3 = np.array(open_idx3)
+    open_idx3 = find_valve_edge_indices(is_open_mi, N)
 
     is_closed_mi = theta_mi <= theta_min
-    close_idx3 = []
-    for k in range(N, len(theta_mi)):
-        if is_closed_mi[k] and not np.any(is_closed_mi[k - N:k]):
-            close_idx3.append(k)
-    close_idx3 = np.array(close_idx3)
+    close_idx3 = find_valve_edge_indices(is_closed_mi, N)
 
     is_open_tr = theta_tr > theta_min
-    open_idx4 = []
-    for k in range(N, len(theta_tr)):
-        if is_open_tr[k] and not np.any(is_open_tr[k - N:k]):
-            open_idx4.append(k)
-    open_idx4 = np.array(open_idx4)
+    open_idx4 = find_valve_edge_indices(is_open_tr, N)
 
     is_closed_tr = theta_tr <= theta_min
-    close_idx4 = []
-    for k in range(N, len(theta_tr)):
-        if is_closed_tr[k] and not np.any(is_closed_tr[k - N:k]):
-            close_idx4.append(k)
-    close_idx4 = np.array(close_idx4)
+    close_idx4 = find_valve_edge_indices(is_closed_tr, N)
 
     pairs_ao = np.array([
         (o, close_idx1[(close_idx1 > o) & (close_idx1 < o_next)][-1])

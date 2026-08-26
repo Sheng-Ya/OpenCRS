@@ -13,6 +13,7 @@ import time
 from joblib import Parallel, delayed
 from scipy.integrate import solve_ivp
 from All_derivatives_njit import make_wrapper
+from rk23_njit import solve_rk23
 from fixed_params import Parameters as Old_Parameters
 
 from Initial_Conditions_after_running_again import Initial_Conditions
@@ -26,6 +27,11 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 target_values = np.arange(0, 10000, 10)
 BUFFER_LIMIT = 80000
+
+# Integrate with the njit Bogacki-Shampine loop in rk23_njit rather than
+# scipy's Python RK23 driver.  Both produce bit-identical trajectories; set
+# this to False to fall back to scipy (used for regression checks).
+USE_NJIT_RK23 = True
 
 max_time = 60 # Maximum time limit to avoid infinite loops
 RAW_OUTPUT_DIM = 32
@@ -337,24 +343,39 @@ def simulate_cpu(
      Pa_O2_lower, rise_time_atr, rise_time_ven,
      fall_time_ven, ahead1, theta_min, delta_P, r, l, V_nominal, V_scale])
 
-    # Bind the storage arrays once instead of looking them up by name during
-    # every derivative evaluation.
-    fast_model_derivatives = make_wrapper(local_updates)
-
     # Solve ODE in one go
-    ODE_solution = solve_ivp(
-        combined_system,
-        t_span,
-        IC_current,
-        max_step=0.001,
-        method="RK23",
-        rtol=1e-3,
-        atol=1e-6,
-        args=(local_updates, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time, fast_model_derivatives)
-    )
+    if USE_NJIT_RK23:
+        ode_status, IC_final = solve_rk23(
+            local_updates,
+            t_span,
+            IC_current,
+            num_cardio + num_cardio_control + num_gas + num_resp_control,
+            BUFFER_LIMIT,
+            0.001,
+            1e-3,
+            1e-6,
+            Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time,
+        )
+    else:
+        # Bind the storage arrays once instead of looking them up by name during
+        # every derivative evaluation.
+        fast_model_derivatives = make_wrapper(local_updates)
+
+        ODE_solution = solve_ivp(
+            combined_system,
+            t_span,
+            IC_current,
+            max_step=0.001,
+            method="RK23",
+            rtol=1e-3,
+            atol=1e-6,
+            args=(local_updates, num_gas, num_cardio, num_cardio_control, num_resp_control, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2, exercise_start_time, fast_model_derivatives)
+        )
+        ode_status = ODE_solution.status
+        IC_final = ODE_solution.y[:, -1]
 
 
-    if ODE_solution.status == -1:
+    if ode_status == -1:
         # Integration failed or early termination
         print("fail")
         print(Input_Parameters[10:15])
@@ -571,7 +592,7 @@ def simulate_cpu(
 
     # print(np.mean(P_sa[open_idx1]), np.mean(P_rv[P_rv_max_idx]), np.mean(P_rv[P_rv_edp_idx]), np.mean(P_la[P_la_descent1_idx]), Vol_percentage_change)
 
-    IC_current = ODE_solution.y[:, -1]
+    IC_current = IC_final
 
     return ([np.mean(past_10_flat_segments), np.mean(P_sa[P_sa_max_idx]), np.mean(P_sa[open_idx1]),
             np.mean(V_lv[pairs_ao[:, 0]]), np.mean(V_lv[pairs_ao[:, 1]]), np.mean(V_rv[pairs_po[:, 0]]), np.mean(V_rv[pairs_po[:, 1]]),

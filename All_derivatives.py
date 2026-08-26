@@ -129,7 +129,7 @@ def eval_spline(V, knots, coeffs):
     )
 
 
-@njit
+@njit(error_model="numpy")
 def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, HR_store, time_since_beat_store,
     HR_every_store, Vu_ev_every_store, Vu_sv_every_store, Vu_rmv_every_store, Vu_amv_every_store, Emax_lv_every_store,
     Emax_rv_every_store, Vu_ev_store, Vu_sv_store, Vu_rmv_store, Vu_amv_store, Emax_lv_store, Emax_rv_store,
@@ -1323,7 +1323,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
     # ============================================================================
     # RETURN ALL COMPUTED VALUES
     # ============================================================================
-    return (time_since_beat,
+    return np.array([time_since_beat,
              HR, Vu_ev, Vu_sv, Vu_rmv, Vu_amv,
              Emax_lv, Emax_rv, f_sp, f_sh, f_v, f_sv, phi_met, HR_every, Vu_ev_every, Vu_sv_every,
              Vu_rmv_every, Vu_amv_every, Emax_lv_every, Emax_rv_every,
@@ -1363,7 +1363,7 @@ def njit_compatible(t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Para
             sigma_Tv, CaO2, CvO2, CaCO2, CvCO2, PvtCO2, PvtO2, QT, Pa_O2_art_target_every, Pa_CO2_art_target_every, BF, TI, VT, VE_flow, dV_dt,
             CTO2, CvtO2, MRTO2, CvbO2, P_n_current, V, VD, VAflow, theta_ao, theta_tr, theta_mi, theta_po, Q_bv, Q_hv, Q_rmv, Q_sv,
             AR_mi, AR_tr, AAA, V_ev, V_sv, V_rmv, V_amv, dP_rv_dt, dP_lv_dt,P_peri, # v_r, x_r
-            )
+            ])
 
 
 def model_derivatives(t, state, updates, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters, cs_t1, cs_t2, knots_1, knots_2):
@@ -1626,3 +1626,123 @@ def model_derivatives(t, state, updates, num_removed, i, BUFFER_LIMIT, all_time,
             # resp control derivatives
             d_VE_integral_dt #, dv_r_dt, dx_r_dt
     ]
+
+
+# Canonical storage ordering for the fully compiled RK23 path.  The values are
+# bound once per simulation so the RHS performs no dictionary lookups.
+_RHS_READ_KEYS = (
+    "HR_store", "time_since_beat_store", "HR_every_store",
+    "Vu_ev_every_store", "Vu_sv_every_store", "Vu_rmv_every_store",
+    "Vu_amv_every_store", "Emax_lv_every_store", "Emax_rv_every_store",
+    "Vu_ev_store", "Vu_sv_store", "Vu_rmv_store", "Vu_amv_store",
+    "Emax_lv_store", "Emax_rv_store", "f_sp_store", "f_sh_store",
+    "f_v_store", "f_sv_store", "phi_met_store",
+    "Pa_O2_art_target_every_store", "Pa_CO2_art_target_every_store",
+    "Nt_store", "prev_flat_bit_store", "finish_breath_time",
+    "Pa_O2_every_store", "Pa_CO2_every_store", "Pb_CO2_every_store",
+    "PamO2", "PamCO2", "PmbCO2", "t1_store", "t2_store",
+)
+
+_RHS_CIRCULAR_WRITE_KEYS = (
+    "time_since_beat_store", "HR_store", "Vu_ev_store", "Vu_sv_store",
+    "Vu_rmv_store", "Vu_amv_store", "Emax_lv_store", "Emax_rv_store",
+    "f_sp_store", "f_sh_store", "f_v_store", "f_sv_store",
+    "phi_met_store", "HR_every_store", "Vu_ev_every_store",
+    "Vu_sv_every_store", "Vu_rmv_every_store", "Vu_amv_every_store",
+    "Emax_lv_every_store", "Emax_rv_every_store", "theta_ao_store",
+    "theta_po_store", "theta_mi_store", "theta_tr_store", "P_sa_store",
+    "V_lv_store", "V_rv_store", "P_rv_store", "P_la_store",
+    "V_la_store", "V_ra_store", "P_ra_store", "prev_flat_bit_store",
+    "t1_store", "t2_store", "P_lv_store", "phi_atr_store", "phi_store",
+    "tidal_store", "VAflow_store", "Q_pp_store", "dP_rv_dt_store",
+    "dP_lv_dt_store", "P_peri_store", "P_pa_store",
+    "Pa_O2_every_store", "Pa_CO2_every_store", "Pb_CO2_every_store",
+    "Pa_O2_art_target_every_store", "Pa_CO2_art_target_every_store",
+    "Nt_store", "finish_breath_time", "PamO2", "PamCO2", "PmbCO2",
+)
+
+_RHS_PLOT_WRITE_KEYS = (
+    "P_sa", "Q_bp", "Q_hp", "Q_rmp", "Q_amp", "Q_sp", "Q_ep",
+    "Q_pp", "Q_la", "Q_lv", "Q_ra", "Q_rv", "P_lv", "P_rv",
+    "P_la", "P_ra", "VT_rv", "VT_ra", "VT_lv", "VT_la", "P_pa",
+    "P_pp", "P_pv", "P_thor", "P_vc", "Qi_lv", "Qi_rv", "phi",
+    "phi_atr", "P_amv", "P_ev", "AAA", "P_sp", "Q_sa", "Q_vc",
+    "VT_amv", "Q_amv", "Q_pa", "V_sa", "P_bv", "R_bv", "Q_ev",
+    "Q_bv", "Q_hv", "Q_rmv", "Q_sv", "VT_pa", "VT_pp", "VT_pv",
+    "VT_sv", "VT_bv", "VT_hv", "VT_rmv", "VT_vc", "time_history",
+    "theta_ao", "theta_po", "theta_mi", "theta_tr", "AR_mi", "AR_tr",
+    "AA", "V_sv", "V_ev", "V_amv", "V_rmv",
+    "HR", "Vu_ev", "Vu_sv", "Vu_rmv", "Vu_amv", "Emax_lv",
+    "Emax_rv", "R_ep", "R_amp", "R_rmp", "R_sp", "R_bp", "R_hp",
+    "I", "f_sp", "f_sh", "f_v", "f_sv", "Nt", "f_ab", "f_ac",
+    "f_ap", "Tv_change", "Ts_change", "HR_check", "f_sh_delay2",
+    "f_v_delay02", "sigma_Ts", "sigma_Tv", "P_n_current", "V",
+    "MRTCO2", "Pa_O2", "Pa_CO2", "Ca_O2", "Pb_CO2", "Cv_O2",
+    "Ca_CO2", "Cv_CO2", "PvtCO2", "PvtO2", "CvbCO2", "CvtCO2",
+    "QT", "Pa_O2_art_plot", "Pa_CO2_art_plot", "PA_O2", "PA_CO2",
+    "CTO2", "CvtO2", "MRTO2", "CvbO2",
+    "BF", "TI", "VT", "VD", "VAflow", "VE_flow", "dV_dt",
+    "finish_breath_time_plot",
+)
+
+
+def bind_rk23_storage(updates):
+    """Bind this simulation's arrays in the ordering used by njit."""
+    return (
+        tuple(updates[key] for key in _RHS_READ_KEYS),
+        tuple(updates[key] for key in _RHS_CIRCULAR_WRITE_KEYS),
+        tuple(updates[key] for key in _RHS_PLOT_WRITE_KEYS),
+    )
+
+
+@njit(error_model="numpy")
+def model_derivatives_njit(
+    t, state, num_removed, i, j, BUFFER_LIMIT, all_time,
+    Input_Parameters, read_arrays, circular_write_arrays, plot_write_arrays,
+    cs_t1, cs_t2, knots_1, knots_2,
+):
+    """Compiled model wrapper used by the compiled RK23 driver."""
+    r = njit_compatible(
+        t, state, num_removed, i, BUFFER_LIMIT, all_time, Input_Parameters,
+        *read_arrays, cs_t1, cs_t2, knots_1, knots_2,
+    )
+
+    store_index = (i - num_removed) % BUFFER_LIMIT
+    circular_values = (
+        r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9],
+        r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18],
+        r[19], r[182], r[185], r[184], r[183], state[14], state[5],
+        state[7], r[127], r[128], state[4], state[6], r[129], r[20],
+        r[27], r[28], r[126], r[138], r[137], r[179], r[181], r[121],
+        r[197], r[198], r[199], r[130], r[21], r[22], r[23], r[167],
+        r[168], r[26], r[29], r[30], r[31], r[32],
+    )
+    for k in range(len(circular_values)):
+        circular_write_arrays[k][store_index] = circular_values[k]
+
+    plot_index = j - num_removed
+    plot_values = (
+        state[14], r[117], r[118], r[119], r[120], r[115], r[116],
+        r[121], r[122], r[123], r[124], r[125], r[126], r[127], r[128],
+        r[129], state[7], state[6], state[5], state[4], r[130], r[131],
+        r[132], r[133], r[134], r[135], r[136], r[137], r[138], r[139],
+        r[140], r[192], state[13], state[15], r[142], state[12], r[143],
+        state[3], r[144], r[145], r[146], r[147], r[186], r[187], r[188],
+        r[189], state[0], state[1], state[2], state[8], state[9], state[10],
+        state[11], state[16], t, r[182], r[185], r[184], r[183], r[190],
+        r[191], r[141], r[194], r[193], r[196], r[195],
+        r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[148], r[149],
+        r[150], r[151], r[152], r[153], r[154], r[8], r[9], r[10], r[11],
+        r[26], r[155], state[32], state[33], state[45], state[44], r[13],
+        r[156], r[157], r[158], r[159], r[178], r[179],
+        state[75], r[21], r[22], r[160], r[23], r[161], r[162], r[163],
+        r[164], r[165], state[79], state[77], r[166], r[167], r[168],
+        r[24], r[25], state[76], r[175], r[176], r[177],
+        r[169], r[170], r[171], r[180], r[181], r[172], r[173], r[29],
+    )
+    for k in range(len(plot_values)):
+        plot_write_arrays[k][plot_index] = plot_values[k]
+
+    # The 82 ODE derivatives occupy this stable slice of njit_compatible's
+    # output.  It is fresh on every call, so RK stages never alias each other.
+    return r[33:115]
