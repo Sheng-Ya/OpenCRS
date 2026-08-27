@@ -997,7 +997,7 @@ if __name__ == "__main__":
             # resp control
             [0.2332 * lower, 0.2332 * upper], [1 * lower, 1 * upper], [0.2025 * lower, 0.2025 * upper], [4.72e-09 * lower, 4.72e-09 * upper],
             [0.1587 * lower, 0.1587 * upper], [0.0673 * lower, 0.0673 * upper],
-            [21.9 * 0.8, 21.9 * 1.2], [3.02 * 0.8, 3.02 * 1.2],
+            [21.9 * lower, 21.9 * 1.2], [3.02 * 0.8, 3.02 * upper],
             # cardio
             [3.72 * lower, 3.72 * upper], [0.28 * lower, 0.28 * upper], [0.00022 * lower, 0.00022 * upper], [0.06 * lower, 0.06 * upper],
             [9.4 * lower, 9.4 * upper], [10.71 * lower, 10.71 * upper], [20 * lower, 20 * upper], [3.57 * lower, 3.57 * upper],
