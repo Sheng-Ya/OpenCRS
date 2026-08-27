@@ -298,7 +298,7 @@ if __name__ == "__main__":
         atrial_ratio_mc_samples=ATRIAL_RATIO_MC_SAMPLES,
     )
 
-    # hmw.pre_wave_train_emulators(n_simulations=PRE_WAVE_N_SIMULATIONS, refit_on_all_data=False)
+    hmw.pre_wave_train_emulators(n_simulations=PRE_WAVE_N_SIMULATIONS, refit_on_all_data=False)
 
     size = 400000
     _ = hmw.run_waves(n_waves=8, n_simulations=6000, n_test_samples=size, refit_on_all_data=False, refit_emulator_on_last_wave=True, max_retries=15, resume_wave=False)
