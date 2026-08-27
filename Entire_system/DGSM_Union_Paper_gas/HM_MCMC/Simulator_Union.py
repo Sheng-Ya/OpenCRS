@@ -280,22 +280,25 @@ class Simulator(ABC, ValidationMixin):
             Tuple of (simulation_results, valid_input_parameters).
             Only successful simulations are included.
         """
-        self.logger.info("Running batch simulation for %d samples", len(x))
+        n_samples = len(x)
+        self.logger.info("Running batch simulation for %d samples", n_samples)
 
-        # Helper function for a single simulation
-        def _run_one(i):
-            self.logger.debug("Running simulation for sample %d/%d", i + 1, len(x))
-            result = self.forward(x[i: i + 1], allow_failures=allow_failures)
+        # Helper function for a single simulation.  The sample row is passed in (as a
+        # detached clone, since a slice of `x` would drag the whole tensor's storage
+        # through the pickle) so that loky does not serialise all of `x` per task.
+        def _run_one(i, x_i):
+            self.logger.debug("Running simulation for sample %d/%d", i + 1, n_samples)
+            result = self.forward(x_i, allow_failures=allow_failures)
             if result is None:
                 self.logger.warning(
                     "Simulation %d/%d failed. Result is None and not appended",
-                    i + 1, len(x),
+                    i + 1, n_samples,
                 )
                 return None
             if not torch.is_tensor(result):
                 self.logger.warning(
                     "Simulation %d/%d produced a non-tensor result; dropping",
-                    i + 1, len(x),
+                    i + 1, n_samples,
                 )
                 return None
             if result.ndim == 1:
@@ -303,34 +306,35 @@ class Simulator(ABC, ValidationMixin):
             if not torch.isfinite(result).all():
                 self.logger.warning(
                     "Simulation %d/%d produced non-finite output; dropping",
-                    i + 1, len(x),
+                    i + 1, n_samples,
                 )
                 return None
             if torch.all(result == 0):
-                self.logger.warning("Simulation %d/%d produced all-zero output; dropping", i + 1, len(x))
+                self.logger.warning("Simulation %d/%d produced all-zero output; dropping", i + 1, n_samples)
                 return None
             if result.shape[-1] != self.out_dim:
                 self.logger.warning(
                     "Simulation %d/%d produced %d outputs; expected %d. Result not appended",
-                    i + 1, len(x), result.shape[-1], self.out_dim,
+                    i + 1, n_samples, result.shape[-1], self.out_dim,
                 )
                 return None
 
-            self.logger.debug("Simulation %d/%d successful", i + 1, len(x))
+            self.logger.debug("Simulation %d/%d successful", i + 1, n_samples)
             return (i, result)
 
         # Parallel execution with tqdm progress bar
         with tqdm_joblib(
                 tqdm(
-                    total=len(x),
+                    total=n_samples,
                     desc="Running simulations",
                     disable=not self.progress_bar,
                     unit="sample",
                     unit_scale=True,
                 )
         ):
-            outputs = Parallel(n_jobs=256, backend="loky")(
-                delayed(_run_one)(i) for i in range(len(x))
+            # 384 core remote machine
+            outputs = Parallel(n_jobs=384, backend="loky")(
+                delayed(_run_one)(i, x[i: i + 1].clone()) for i in range(n_samples)
             )
             # n_jobs = 64
             # outputs = Parallel(n_jobs=n_jobs, backend="loky", pre_dispatch=n_jobs)(
