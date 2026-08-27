@@ -19,7 +19,7 @@ import time
 
 from joblib import Parallel, delayed
 from scipy.integrate import solve_ivp
-from All_derivatives_njit import make_wrapper
+from All_derivatives_njit import make_wrapper, co2_content_from_pco2, invert_co2_content_to_pco2
 from rk23_njit import solve_rk23
 from fixed_params import Parameters as Old_Parameters
 
@@ -149,6 +149,48 @@ def minimise_breathing(t1, t2, GV_dead, V0_dead, lambda1, lambda2, n, Pmax, Pmax
     cs_t2 = CubicSpline(VAflow_vals, t2_clean, bc_type="natural")
 
     return cs_t1.c, cs_t2.c, cs_t1.x, cs_t2.x
+
+
+# Indices of the four gas *content* states in IC_overall (CTO2 76, CvtCO2 77, CBO2 78,
+# CvbCO2 79).  Contents are parameter-dependent; the tensions they represent are not.
+# Carrying tensions rather than contents between runs keeps every sample at the same
+# physiological starting state instead of at the same numbers.
+GAS_KEYS = ("a2", "alpha2", "beta2", "C2", "K2", "alpha_O2", "Z")
+
+
+def _gas_params(sample, old_parameters):
+    return [sample[k] if k in sample else old_parameters[k] for k in GAS_KEYS]
+
+
+def gas_params_match(sample, reference_gas_params, old_parameters):
+    """Return True when a sample uses the base point's exact gas parameters."""
+    return tuple(_gas_params(sample, old_parameters)) == tuple(reference_gas_params)
+
+
+def gas_tensions(IC, sample, old_parameters):
+    a2g, al2, be2, C2, K2, aO2, Z = _gas_params(sample, old_parameters)
+    PvtO2 = max(IC[76] / aO2, 1.0)
+    PvbO2 = max(IC[78] / aO2, 1.0)
+    return (PvtO2,
+            invert_co2_content_to_pco2(IC[77], PvtO2, a2g, al2, be2, C2, K2, Z),
+            PvbO2,
+            invert_co2_content_to_pco2(IC[79], PvbO2, a2g, al2, be2, C2, K2, Z))
+
+
+def apply_gas_tensions(IC, tensions, sample, old_parameters):
+    a2g, al2, be2, C2, K2, aO2, Z = _gas_params(sample, old_parameters)
+    PvtO2, PvtCO2, PvbO2, PvbCO2 = tensions
+    IC = IC.copy()
+    IC[76] = aO2 * PvtO2
+    IC[78] = aO2 * PvbO2
+    IC[77] = co2_content_from_pco2(PvtCO2, PvtO2, a2g, al2, be2, C2, K2, Z)
+    IC[79] = co2_content_from_pco2(PvbCO2, PvbO2, a2g, al2, be2, C2, K2, Z)
+    return IC
+
+# The gas entries in Initial_Conditions_after_running_again.py are CONTENTS, which only
+# mean something alongside the dissociation-curve parameters they were converged at.
+REFERENCE_GAS_PARAMS = {"a2": 1.819, "alpha2": 0.05591, "beta2": 0.03255, "C2": 87.0, "K2": 194.4, "alpha_O2": 3.17e-05,}
+REST_GAS_TENSIONS = gas_tensions(IC_overall, REFERENCE_GAS_PARAMS, Old_Parameters)
 
 
 def zero_state_result():
@@ -311,6 +353,12 @@ def simulate_cpu(
     "scale_param1", "scale_param3", "scale_param4", "scale_param6",
     "Pa_O2_lower", "rise_time_atr", "rise_time_ven",
      "fall_time_ven", "ahead1", "theta_min", "delta_P", "r", "l", "V_nominal", "V_scale"])
+
+    # Gas stores start from fixed tensions, not fixed contents: the content<->tension
+    # mapping depends on sampled parameters (alpha_O2, C2, a2, K2, alpha2, beta2), so
+    # freezing contents would start each draw at a different physiological state.
+    if IC_initial is None:
+        IC_current = apply_gas_tensions(IC_current, REST_GAS_TENSIONS, Current_Parameters, old_parameters)
 
     # determine the correct breathing profile
     if breath_coef is None:
@@ -727,6 +775,8 @@ def run_basepoint(base_sample, old_Parameters):
 
         return {
             "result": base_result,
+            "gas_tensions": gas_tensions(IC_final, base_sample, old_Parameters),
+            "gas_params": tuple(_gas_params(base_sample, old_Parameters)),
             "IC_final": IC_final,
             "storage_final": storage_final,
             "breath_coef": breath_coef,
@@ -767,7 +817,8 @@ def parallel_simulations(param_samples, n_jobs, save_path='Result_DGSM_union.npy
         #     base["storage_final"], Old_Parameters, base["IC_final"], base["breath_coef"], base["minimise_coef"]) for params in block)
         t0 = time.time()
         results_perturbations = Parallel(n_jobs=n_jobs, max_nbytes='128K')(delayed(run_simulation)(params,
-        base["storage_final"], Old_Parameters, base["IC_final"], base["breath_coef"], base["minimise_coef"]) for params in block)
+        base["storage_final"], Old_Parameters, base["IC_final"], base["breath_coef"], base["minimise_coef"],
+        base["gas_tensions"], base["gas_params"]) for params in block)
         elapsed = time.time() - t0
         rest_nonconverged = sum(not res["rest_converged"] for res in results_perturbations)
         exercise_nonconverged = sum(not res["exercise_converged"] for res in results_perturbations)
@@ -790,9 +841,15 @@ def parallel_simulations(param_samples, n_jobs, save_path='Result_DGSM_union.npy
     return results_all
 
 
-def run_simulation(params, storage_final, Old_Parameters, IC_final, breath_coef, minimise_coef):
+def run_simulation(params, storage_final, Old_Parameters, IC_final, breath_coef, minimise_coef,
+                   base_gas_tensions, base_gas_params):
     storage_final = copy_storage(storage_final)
-    IC_final = IC_final.copy()
+    # Preserve warm start unless this perturbation changes the gas-coordinate.
+    # Only then re-derive contents from the base point's tensions using this sample's parameters.
+    if gas_params_match(params, base_gas_params, Old_Parameters):
+        IC_final = IC_final.copy()
+    else:
+        IC_final = apply_gas_tensions(IC_final, base_gas_tensions, params, Old_Parameters)
 
     # If the perturbation changes breathing-optimiser inputs, recompute the
     # breathing spline before reconverging at rest.

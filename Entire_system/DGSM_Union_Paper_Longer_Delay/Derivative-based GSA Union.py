@@ -22,8 +22,8 @@ percentage = 50 # change
 lower = 1 - percentage/100
 upper = 1 + percentage/100
 
-X = np.load('DGSM_500_X_union_50_27_08.npy')[:35490,:] # change
-Result = np.load(r'Y:\project\DGSM_Union_Paper_Longer_Delay\Result_DGSM_union.npy')[:35490,:] # change
+X = np.load('DGSM_500_X_union_50_27_08.npy') # change
+Result = np.load(r'Y:\project\DGSM_Union_Paper_Longer_Delay\Result_DGSM_union.npy') # change
 
 D = X.shape[1]
 block_size = D + 1
@@ -248,23 +248,22 @@ sp = ProblemSpec({
             [2 * lower, 2 * upper], [2 * lower, 2 * upper], [2 * lower, 2 * upper], [20 * lower, 20 * upper],
             [20 * lower, 20 * upper], [20 * lower, 20 * upper], [20 * lower, 20 * upper], [286.4 * lower, 286.4 * upper],
             [607.8 * lower, 607.8 * upper], [190.95 * lower, 190.95 * upper], [1361.6 * lower, 1361.6 * upper], [20 * lower, 20 * upper],
-            [30 * lower, 30 * upper], [2.076 * lower, 2.076 * upper], [0.8 * lower, 0.8 * upper], [2 * lower, 2 * upper],
+            [30 * lower, 30 * upper], [2.076 * lower, 2.076 * upper], [6.37 * lower, 6.37 * upper], [2 * lower, 2 * upper],
             [2 * lower, 2 * upper], [2 * lower, 2 * upper], [1.5 * lower, 1.5 * upper], [20 * lower, 20 * upper],
             [10 * lower, 10 * upper], [5 * lower, 5 * upper], [40 * lower, 40 * upper], [10 * lower, 10 * upper],
             [2 * lower, 2 * upper], [2 * lower, 2 * upper], [2 * lower, 2 * upper], [2 * lower, 2 * upper],
             [2 * lower, 2 * upper], [2 * lower, 2 * upper], [5 * lower, 5 * upper], [5 * lower, 5 * upper],
             [5 * lower, 5 * upper], [5 * lower, 5 * upper], [2 * lower, 2 * upper], [0.2 * lower, 0.2 * upper],
             [4 * lower, 4 * upper], [0.3 * lower, 0.3 * upper], [0.014 * lower, 0.014 * upper], [0.011 * lower, 0.011 * upper],
-            [0.1 * lower, 0.1 * upper], [0.2 * lower, 0.2 * upper], [3 * lower, 3 * upper], [2.5 * lower, 2.5 * upper],
-            [20 * lower, 20 * upper], [0.01 * lower, 0.01 * upper], [50 * lower, 50 * upper], [0.25 * lower, 0.25 * upper],
-            [0.25 * lower, 0.25 * upper], [50 * lower, 50 * upper],
+            [1 * lower, 1 * upper], [2 * lower, 2 * upper], [3 * lower, 3 * upper], [2.5 * lower, 2.5 * upper],
+            [320 * lower, 320 * upper], [0.9 * lower, 0.9 * upper], [50 * lower, 50 * upper], [15 * lower, 15 * upper],
+            [6 * lower, 6 * upper], [50 * lower, 50 * upper],
 
             # further added params
             [4.9 * lower, 4.9 * upper], [0.3 * lower, 0.3 * upper], [26.6 * lower, 26.6 * upper],
             [0.04 * lower, 0.04 * upper], [80 * lower, 80 * upper],
             [0.1 * 0.8, 0.1 * 1.2], [0.3 * 0.8, 0.3 * 1.2], [0.45 * 0.85, 0.45 * 1.15], [0.93 * 0.95, 0.93 * 1.05],
-            [0.0873 * lower, 0.0873 * upper], [1.2 * 0.85, 1.2 * 1.15], [1.2 * 0.85, 1.2 * 1.15], [181 * lower, 181 * upper],
-            [31 * lower, 31 * upper]]
+            [0.0873 * lower, 0.0873 * upper], [1.2 * 0.85, 1.2 * 1.15], [1.2 * 0.85, 1.2 * 1.15], [181 * lower, 181 * upper], [31 * lower, 31 * upper]]
         })
 
 output_names = [
