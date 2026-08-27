@@ -27,7 +27,7 @@ BUFFER_LIMIT = 80000
 USE_NJIT_RK23 = True
 
 min_time = 10 # Minimum time in seconds before checking
-max_time = 60 # Maximum time limit to avoid infinite loops
+max_time = 100 # Maximum time limit to avoid infinite loops
 time_step = 200  # Chunk size per solve
 
 
@@ -176,7 +176,7 @@ IC_overall = np.concatenate((IC_cardio, IC_cardio_contr, IC_gas, IC_resp_contr))
 
 def minimise_breathing(t1, t2, GV_dead, V0_dead, lambda1, lambda2, n, Pmax, Pmax_dot, E_rs, R_rs, P_ao):
     dt = 0.001 # must edit in Resp_Control_Breath_Optimiser too
-    bounds = [(0.4, 3), (0.4, 6)]  # [t1, t2]
+    bounds = [(0.5, 3), (0.5, 6)]  # [t1, t2]
     tolerance = 0.0001
 
     VAflow_vals = np.linspace(0.01, 1.6, 200)
