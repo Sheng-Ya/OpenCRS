@@ -227,7 +227,8 @@ def simulate_cpu(
             exercise_start_time = latest_nonzero_value
     else:
         IC_current = IC_initial.copy()
-        t_span = [latest_nonzero_value, latest_nonzero_value + 60]
+        segment = max_time if (state == "Rest" and attempt == 0) else 60
+        t_span = [latest_nonzero_value, latest_nonzero_value + segment]
         if state == "Exercise":
             if exercise_start_time is None:
                 exercise_start_time = latest_nonzero_value
