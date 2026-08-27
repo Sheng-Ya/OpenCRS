@@ -22,7 +22,7 @@ def compute_constants(t1, t2, VA, VD, E_rs, R_rs, P_ao, tolerance):
     Pt1 = a1 * t1 + a2 * (t1 ** 2)
     Vt1 = VA * (t1 + t2) + VD
     # tau = max((t2 / (-np.log(tolerance * R_rs / Pt1))), 0.001)
-    raw_tau = t2 / (-np.log(tolerance * R_rs / Pt1))
+    raw_tau = 0.5 * t2 / (-np.log(tolerance * R_rs / Pt1))
     tau_min = 0.001
     tau = np.sqrt(raw_tau * raw_tau + tau_min * tau_min)
     B = E_rs / R_rs
@@ -145,7 +145,7 @@ def objective(initial_guess, required_params, VAflow, VD, dt, tolerance):
 
     WI, WE = calculate_variables(initial_guess, VAflow, VD, tolerance, E_rs, R_rs, P_ao, Pmax, Pmax_dot, n, lambda1)
 
-    t2_min = 0.6
+    t2_min = 0.5
     lambda_barrier = 1000.0
     barrier = lambda_barrier * np.log1p(np.exp(20.0 * (t2_min - initial_guess[1]))) / 20.0
 

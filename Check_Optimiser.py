@@ -456,7 +456,7 @@ from Resp_Control_Breath_Optimiser import objective
 
 
 
-bounds = [(0.6, 3), (0.6, 6)]  # [t1, t2]
+bounds = [(0.5, 6), (0.5, 9)]  # [t1, t2]
 tolerance = 0.001
 
 VAflow_vals = np.linspace(0.01, 1.2, 200)
@@ -475,8 +475,8 @@ for idx, VAflow in enumerate(VAflow_vals):
     VD_volume = VD[idx]
     required_params = [
         0.86,
-        0.689,
-        0.5,
+        0.489,
+        0.4,
         50,
         1000,
         21.9,
