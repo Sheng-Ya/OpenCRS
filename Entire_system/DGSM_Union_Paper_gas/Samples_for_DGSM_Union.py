@@ -41,6 +41,11 @@ UNION_OUTPUT_DIM = RAW_OUTPUT_DIM * 2
 CONVERGENCE_TOLERANCE = 0.03
 MAX_CONVERGENCE_ATTEMPTS = 5
 MIN_MEASUREMENT_DURATION = 300
+# Same meaning as in HM_MCMC/AutoEmulate_Simulator_Union.py.  Values unchanged; naming
+# them lets Run_model.py overwrite them with the calibration pipeline's timings so the
+# MAP is verified with the simulator the emulators were trained on.
+EXERCISE_FIRST_SEGMENT = 700
+CONVERGENCE_EXTENSION = 60
 
 # First iteration
 # get the first derivative and outputs from all the separated systems
@@ -264,12 +269,12 @@ def simulate_cpu(
         exercise_start_time = np.inf
     elif state == "Exercise" and attempt == 0:
         IC_current = IC_initial.copy()
-        t_span = [latest_nonzero_value, latest_nonzero_value + 700]
+        t_span = [latest_nonzero_value, latest_nonzero_value + EXERCISE_FIRST_SEGMENT]
         if exercise_start_time is None:
             exercise_start_time = latest_nonzero_value
     else:
         IC_current = IC_initial.copy()
-        segment = max_time if (state == "Rest" and attempt == 0) else 60
+        segment = max_time if (state == "Rest" and attempt == 0) else CONVERGENCE_EXTENSION
         t_span = [latest_nonzero_value, latest_nonzero_value + segment]
         if state == "Exercise":
             if exercise_start_time is None:

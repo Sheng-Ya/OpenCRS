@@ -229,11 +229,33 @@ Union = Rest_only | Exercise_only | Overlap
 # MUST SORT SO ITS THE SAME ORDER AS sp["names"] (the simulator's parameter order).
 subset_vars = [name for name in sp["names"] if name in Union]
 
+BOUND_SCALE_PAIRS = (
+    (lower, upper),
+    (upper, lower),
+    (lower, 1.2),
+    (0.8, upper),
+    (lower, 1.15),
+    (0.9, upper),
+    (0.8, 1.2),
+    (0.85, 1.15),
+    (0.95, 1.05),
+)
+
+
+def nominal_from_bounds(name: str, bounds: list[float]) -> float:
+    lo, hi = map(float, bounds)
+    for lo_scale, hi_scale in BOUND_SCALE_PAIRS:
+        nominal = lo / lo_scale
+        if np.isclose(nominal * hi_scale, hi, rtol=1e-10, atol=1e-12):
+            return round(float(nominal), 12)
+
+    raise ValueError(f"Could not infer nominal value for {name!r} from bounds {bounds!r}")
+
 
 # Convert to dictionary
 param_ranges: dict[str, tuple[float, float]] = {
     str(name): (lo := round(float(b[0]), 12), hi := round(float(b[1]), 12),) if str(name) in subset_vars else (
-        m := round(0.5 * (float(b[0]) + float(b[1])), 12), m,)
+        nominal := nominal_from_bounds(str(name), b), nominal,)
     for name, b in zip(sp["names"], sp["bounds"])
 }
 

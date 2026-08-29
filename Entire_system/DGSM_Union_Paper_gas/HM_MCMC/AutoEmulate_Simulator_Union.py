@@ -135,11 +135,16 @@ BUFFER_LIMIT = 80000
 # this to False to fall back to scipy (used for regression checks).
 USE_NJIT_RK23 = True
 
-max_time = 300 # Maximum time limit to avoid infinite loops
+max_time = 600 # Maximum time limit to avoid infinite loops
 RAW_OUTPUT_DIM = 31
 CONVERGENCE_TOLERANCE = 0.03
 MAX_CONVERGENCE_ATTEMPTS = 5
-MIN_MEASUREMENT_DURATION = 300
+MIN_MEASUREMENT_DURATION = 600
+# Length of the first Exercise segment, and of every convergence extension after the
+# first segment of either state.  Named so Run_model.py can read the calibration
+# timings rather than duplicating them.
+EXERCISE_FIRST_SEGMENT = 1400
+CONVERGENCE_EXTENSION = 60
 
 # gas exchange
 required_gas_keys = ["Pd_1_O2", "Pd_1_CO2", "Pd_2_O2", "Pd_2_CO2", "Pd_3_O2", "Pd_3_CO2", "Pd_4_O2", "Pd_4_CO2",
@@ -332,12 +337,12 @@ class Cardiopulmonary(Simulator):
             exercise_start_time = np.inf
         elif state == "Exercise" and attempt == 0:
             IC_current = IC_initial.copy()
-            t_span = [latest_nonzero_value, latest_nonzero_value + 700]
+            t_span = [latest_nonzero_value, latest_nonzero_value + EXERCISE_FIRST_SEGMENT]
             if exercise_start_time is None:
                 exercise_start_time = latest_nonzero_value
         else:
             IC_current = IC_initial.copy()
-            segment = max_time if (state == "Rest" and attempt == 0) else 60
+            segment = max_time if (state == "Rest" and attempt == 0) else CONVERGENCE_EXTENSION
             t_span = [latest_nonzero_value, latest_nonzero_value + segment]
             if state == "Exercise":
                 if exercise_start_time is None:
