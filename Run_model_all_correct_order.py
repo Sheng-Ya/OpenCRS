@@ -27,7 +27,7 @@ BUFFER_LIMIT = 80000
 USE_NJIT_RK23 = True
 
 min_time = 10 # Minimum time in seconds before checking
-max_time = 100 # Maximum time limit to avoid infinite loops
+max_time = 540 # Maximum time limit to avoid infinite loops
 time_step = 200  # Chunk size per solve
 
 
