@@ -57,11 +57,17 @@ pipeline stages with their commands, and the figure-to-script map.
 
 ## Data
 
-The repository contains source code only. The numerical arrays behind the
+The repository contains source code only. The numerical data behind the
 published results — the DGSM design and model outputs, the history-matching
 NROY region, the fitted Gaussian-process emulators and the MCMC posterior
-samples — total roughly 19 GB, and will be deposited in Zenodo under CC BY 4.0,
-with the DOI added here prior to publication.
+samples — is archived on Zenodo under CC BY 4.0:
+
+> ### **https://doi.org/10.5281/zenodo.22732021**
+
+The deposit is a 2.7 GB minimal dataset that reproduces the main reported
+results without re-running the simulator, documented by a `MANIFEST.txt` and
+verifiable against `CHECKSUMS.sha256`. The complete set of intermediate arrays
+the workflow produces is roughly 19 GB.
 
 See the [Data section](Entire_system/DGSM_Union_Paper_gas/README.md#data) of the
 paper folder's README for the file-by-file breakdown and for the ~2.8 GB subset
