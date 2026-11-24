@@ -48,6 +48,70 @@ def gaussian_integral(mu, z, pref, tau):
     return pref * math.erf(arg)
 
 
+# @njit
+# def gaussian_expiration_V(t, t1, Vt1, Pt1, tau, B, R_rs):
+#     """
+#     Expiratory volume driven by the Gaussian (diaphragm braking) pressure only
+#     """
+#     mu = t1 + 0.5 * B * tau
+#     K = - (t1 * t1) / tau + (mu ** 2) / tau
+#     pref = np.exp(K) * 0.5 * np.sqrt(np.pi * tau)
+#     integral = gaussian_integral(mu, t, pref, tau) - gaussian_integral(mu, t1, pref, tau)
+#     constant = (Vt1 / np.exp(-B * t1))
+#     expBz = np.exp(-B * t)
+#     return (Pt1 / R_rs) * expBz * integral + constant * expBz
+
+@njit
+def erfcx_pos(x):  # exp(x^2) * erfc(x) for x >= 0
+    if x < 25.0:
+        return math.erfc(x) * math.exp(x * x)
+    x2 = x * x
+    return (1.0 - 0.5 / x2 + 0.75 / (x2 * x2) - 1.875 / (x2 * x2 * x2)) / (x * math.sqrt(math.pi))
+
+@njit
+def gaussian_expiration_V(t, t1, Vt1, Pt1, tau, B, R_rs):
+    """
+    Expiratory volume driven by the Gaussian (diaphragm braking) pressure only.
+    Written with erfcx: the erf form above cancels to noise when B * sqrt(tau) is large.
+    """
+    s = t - t1
+    sq = math.sqrt(tau)
+    c = 0.5 * B * sq
+    x = c - s / sq
+    if x >= 0.0:
+        term = math.exp(-s * s / tau) * erfcx_pos(x)
+    else:
+        term = 2.0 * math.exp(c * c - B * s) - math.exp(-s * s / tau) * erfcx_pos(-x)
+    eBs = math.exp(-B * s)
+    return (Pt1 / R_rs) * 0.5 * math.sqrt(math.pi * tau) * (term - eBs * erfcx_pos(c)) + Vt1 * eBs
+
+
+@njit
+def poly_response(s, E_rs, R_rs):
+    """
+    Volume responses (from zero) to muscle pressures s^2 and s^3
+    """
+    B = E_rs / R_rs
+    decay = 1 - np.exp(-B * s)
+    F2 = s ** 2 / E_rs - 2 * R_rs * s / (E_rs ** 2) + 2 * R_rs ** 2 / (E_rs ** 3) * decay
+    F3 = s ** 3 / E_rs - 3 * R_rs * s ** 2 / (E_rs ** 2) + 6 * R_rs ** 2 * s / (E_rs ** 3) - 6 * R_rs ** 3 / (E_rs ** 4) * decay
+    return F2, F3
+
+
+@njit
+def expiratory_drive(t1, t2, Vt1, Pt1, tau, B, E_rs, R_rs, V_end):
+    """
+    Abdominal (expiratory) muscle pressure b2 * s^2 + b3 * s^3, s = t - t1.
+    b2, b3 give V(t1 + t2) = V_end and zero flow at t1 + t2, as a1, a2 do for inspiration.
+    """
+    F2, F3 = poly_response(t2, E_rs, R_rs)
+    Dv = V_end - gaussian_expiration_V(t1 + t2, t1, Vt1, Pt1, tau, B, R_rs)
+    Dp = E_rs * V_end - Pt1 * np.exp(-(t2 ** 2) / tau)
+    b2 = (Dv - Dp * F3 / (t2 ** 3)) / (F2 - F3 / t2)
+    b3 = Dp / (t2 ** 3) - b2 / t2
+    return b2, b3
+
+
 @njit
 def calculate_variables(initial_guess, VA, VD, tolerance, E_rs, R_rs, P_ao, Pmax, Pmax_dot, n, lambda1):
     """
@@ -76,8 +140,11 @@ def calculate_variables(initial_guess, VA, VD, tolerance, E_rs, R_rs, P_ao, Pmax
     P_musc_insp = a1 * x + a2 * x ** 2
     dP_musc_dt_insp = a1 + 2 * a2 * x
 
-    P_musc_exp = Pt1 * np.exp(-((z - t1) ** 2) / tau)
-    dP_musc_dt_exp = P_musc_exp * (-2 * (z - t1) / tau)
+    s_exp = z - t1
+    b2, b3 = expiratory_drive(t1, t2, Vt1, Pt1, tau, B, E_rs, R_rs, 0.0)
+    P_brake = Pt1 * np.exp(-(s_exp ** 2) / tau)
+    P_musc_exp = P_brake + b2 * s_exp ** 2 + b3 * s_exp ** 3
+    # dP_musc_dt_exp = P_brake * (-2 * s_exp / tau) + 2 * b2 * s_exp + 3 * b3 * s_exp ** 2
 
 
     # Compute constants for Volume solution
@@ -88,23 +155,12 @@ def calculate_variables(initial_guess, VA, VD, tolerance, E_rs, R_rs, P_ao, Pmax
               (a1 * R_rs / E_rs ** 2) + 2 * a2 * (R_rs ** 2) / (E_rs ** 3) +
                      c * np.exp(-B * x))
 
-    # Compute constants
-    mu = t1 + 0.5 * B * tau
-    term1 = - (t1 * t1) / tau
-    term2 = (mu ** 2) / tau
-    K = term1 + term2
-    pref = np.exp(K) * 0.5 * np.sqrt(np.pi * tau)
-
-    I0 = gaussian_integral(mu, t1, pref, tau)
-
-    I_z = np.zeros(len(z))
+    # Calculate for t1 <= times <= t1 + t2: Gaussian brake + abdominal drive
+    V_brake = np.empty(len(z))
     for i in range(len(z)):
-        I_z[i] = gaussian_integral(mu, z[i], pref, tau)
-
-    integral = I_z - I0
-    constant = (Vt1 / np.exp(-B * t1))  # - (Pt1 / R_rs) * I0
-    expBz = np.exp(-B * z)
-    V_exp = (Pt1 / R_rs) * expBz * integral + constant * expBz
+        V_brake[i] = gaussian_expiration_V(z[i], t1, Vt1, Pt1, tau, B, R_rs)
+    F2_s, F3_s = poly_response(s_exp, E_rs, R_rs)
+    V_exp = V_brake + b2 * F2_s + b3 * F3_s
 
 
     dV_dt_insp = (P_musc_insp - E_rs * V_insp) / R_rs
@@ -113,7 +169,7 @@ def calculate_variables(initial_guess, VA, VD, tolerance, E_rs, R_rs, P_ao, Pmax
 
     # continue calculations
     dV2_dt2_values_squared_insp = ((1 / R_rs) * (dP_musc_dt_insp - E_rs * dV_dt_insp)) ** 2
-    dV2_dt2_values_squared_exp = ((1 / R_rs) * (dP_musc_dt_exp - E_rs * dV_dt_exp)) ** 2
+    # dV2_dt2_values_squared_exp = ((1 / R_rs) * (dP_musc_dt_exp - E_rs * dV_dt_exp)) ** 2  # old expiratory smoothness cost
 
 
     E1_n_insp = (1 - np.clip((P_musc_insp / Pmax), 0, 0.999999)) ** n
@@ -123,7 +179,8 @@ def calculate_variables(initial_guess, VA, VD, tolerance, E_rs, R_rs, P_ao, Pmax
     integrand_inspire = (P_musc_insp * dV_dt_insp) / (
     E1_n_insp * E2_n_insp) + lambda1 * dV2_dt2_values_squared_insp
 
-    integrand_expire = dV2_dt2_values_squared_exp
+    # Expiratory cost: resistive work of expiration (energy dissipated pushing air out through R_rs)
+    integrand_expire = R_rs * dV_dt_exp ** 2
 
     integral_inspire = trapz_uniform(integrand_inspire, dt1)
     integral_expire = trapz_uniform(integrand_expire, dt2)
@@ -171,20 +228,12 @@ def calculate_single_V_dV_dt(t, initial_guess, VA, VD, tolerance, E_rs, R_rs, P_
 
         dV_dt = (1 / R_rs) * (a1 * t + a2 * (t ** 2) - E_rs * V)
     else:
-        mu = t1 + 0.5 * B * tau
-        term1 = - (t1 * t1) / tau
-        term2 = (mu ** 2) / tau
-        K = term1 + term2
-        pref = np.exp(K) * 0.5 * np.sqrt(np.pi * tau)
+        s_exp = t - t1
+        b2, b3 = expiratory_drive(t1, t2, Vt1, Pt1, tau, B, E_rs, R_rs, 0.0)
+        F2_s, F3_s = poly_response(s_exp, E_rs, R_rs)
+        V = gaussian_expiration_V(t, t1, Vt1, Pt1, tau, B, R_rs) + b2 * F2_s + b3 * F3_s
 
-        I0 = gaussian_integral(mu, t1, pref, tau)
-        I_z = gaussian_integral(mu, t, pref, tau)
-
-        integral = I_z - I0
-        constant = (Vt1 / np.exp(-B * t1))
-        V = (Pt1 / R_rs) * expBz * integral + constant * expBz
-
-        P_musc = Pt1 * np.exp((-(t - t1) ** 2) / tau)
+        P_musc = Pt1 * np.exp(-(s_exp ** 2) / tau) + b2 * s_exp ** 2 + b3 * s_exp ** 3
         dV_dt = (P_musc - E_rs * V) / R_rs
 
     return V, dV_dt
