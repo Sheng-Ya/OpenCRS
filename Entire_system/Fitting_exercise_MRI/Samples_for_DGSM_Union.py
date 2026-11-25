@@ -19,6 +19,7 @@ import time
 # Read participant inputs without changing the shared reference dictionaries.
 import csv
 import json
+import runpy
 from pathlib import Path
 
 from joblib import Parallel, delayed
@@ -29,6 +30,8 @@ from fixed_params import Parameters as Old_Parameters
 
 from Initial_Conditions_after_running_again import Initial_Conditions
 from All_Next_Conditions import make_fresh_storage
+# Keep the prescribed workload clock and MRI observations separate from equilibration.
+from MRI_protocol import build_workload_stages, WindowObserver
 
 
 target_values = np.arange(0, 10000, 10)
@@ -50,6 +53,12 @@ MIN_MEASUREMENT_DURATION = 300
 # MAP is verified with the simulator the emulators were trained on.
 EXERCISE_FIRST_SEGMENT = 700
 CONVERGENCE_EXTENSION = 60
+# Short chunks retain the full recovery acquisition in the circular history buffer.
+OBSERVATION_CHUNK_SECONDS = 9.0
+# Result columns filled from WindowObserver.summary(), in its order: HR, LV EDV, LV ESV,
+# RV EDV, RV ESV, systolic and diastolic arterial pressure.
+MRI_TARGET_COLUMNS = np.asarray([0, 3, 4, 5, 6, 1, 2])
+MAP_PARAMETERS_PATH = Path(__file__).resolve().parents[2] / "check.py"
 
 # First iteration
 # get the first derivative and outputs from all the separated systems
@@ -239,6 +248,7 @@ def participant_parameters(weight_kg, height_cm, age, sex, watts, reference,
     params.update(MRTO2_basal=o_rest, MRTCO2_basal=c_rest,
                   MRO2=o_rest, MRCO2=c_rest, V_tot=blood_volume,
                   MRO2_exercise=o_exercise, MRCO2_exercise=c_exercise,
+                  weight_kg=weight_kg, max_watts=watts, rho_delta=rho_delta,
                   VO2peak_supine_L_s=peak_o2,
                   AT=c_rest-reference["MRBCO2"] + rho_delta*(peak_o2-o_rest),
                   participant_volume_scale=blood_volume/5027.6)
@@ -306,6 +316,10 @@ def simulate_cpu(
     attempt=0,
     breath_coef=None,
     exercise_start_time=None,
+    duration=None,
+    start_time=None,
+    extract_outputs=True,
+    metabolic_forcing=None,
 ):
     # local_updates = {key: copy.deepcopy(value) for key, value in storage.items()}
     i = local_updates["i"].item()
@@ -330,6 +344,11 @@ def simulate_cpu(
                 exercise_start_time = latest_nonzero_value
         else:
             exercise_start_time = np.inf
+
+    # Exact protocol intervals override the legacy 300/700-second segments.
+    if duration is not None:
+        t0 = (0.0 if IC_initial is None else latest_nonzero_value) if start_time is None else start_time
+        t_span = [t0, t0 + duration]
 
     # Cardio parameters
     (A_im, T_im, Tc, g_thor, P_thormax_n, P_thormin_n, VT_n, C_pa, C_pp, C_pv, L_pa,
@@ -382,6 +401,9 @@ def simulate_cpu(
     if state == "Exercise":
         MRCO2 = old_parameters["MRCO2_exercise"]
         MRO2 = old_parameters["MRO2_exercise"]
+    # Change only the current demand; capacity, AT and tissue states stay intact.
+    if metabolic_forcing is not None:
+        MRO2, MRCO2 = metabolic_forcing
 
     # Resp control
     (GV_dead, KcCO2, KcMRV, KpCO2, KpO2, V0_dead, VA_rest, lambda1, lambda2, n, Pmax, Pmax_dot, E_rs, R_rs, P_ao) = \
@@ -505,6 +527,10 @@ def simulate_cpu(
         print("fail")
         print(Input_Parameters[10:15])
         return zero_state_result(), None, None, None
+
+    # Short protocol chunks need no legacy final-ten-heartbeat extraction.
+    if not extract_outputs:
+        return zero_state_result(), IC_final, local_updates, [cs_t1, cs_t2, knots_1, knots_2]
 
     i_buffer = local_updates["i"].item() % BUFFER_LIMIT
 
@@ -746,6 +772,10 @@ def safe_simulate_cpu(
     attempt=0,
     breath_coef=None,
     exercise_start_time=None,
+    duration=None,
+    start_time=None,
+    extract_outputs=True,
+    metabolic_forcing=None,
 ):
     try:
         use_alarm = hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
@@ -754,7 +784,9 @@ def safe_simulate_cpu(
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout)
         result = simulate_cpu(
-            params, storage, old_parameters, IC_initial, state, attempt, breath_coef, exercise_start_time
+            params, storage, old_parameters, IC_initial, state, attempt, breath_coef, exercise_start_time,
+            duration=duration, start_time=start_time, extract_outputs=extract_outputs,
+            metabolic_forcing=metabolic_forcing,
         )
         if use_alarm:
             signal.alarm(0)  # Cancel timeout
@@ -823,25 +855,33 @@ def run_state_to_convergence(
     return result, IC_final, storage, breath_coef, converged
 
 
-def run_basepoint(base_sample, old_Parameters):
-    storage_copy = make_fresh_storage()
+def run_basepoint(base_sample, old_Parameters, nominal_rest=None):
+    # All participant base points start from the same nominal resting state/history.
+    storage_copy = (make_fresh_storage() if nominal_rest is None
+                    else copy_storage(nominal_rest["storage_final"]))
+    IC_initial = None
+    initial_breath_coef = None
+    minimise_coef = [base_sample[k] for k in ("GV_dead", "V0_dead", "E_rs", "R_rs")]
+    if nominal_rest is not None:
+        IC_initial = nominal_rest["IC_final"].copy()
+        # Preserve gas tensions when this sampled base point changes gas coordinates.
+        if not gas_params_match(base_sample, nominal_rest["gas_params"], old_Parameters):
+            IC_initial = apply_gas_tensions(
+                IC_initial, nominal_rest["gas_tensions"], base_sample, old_Parameters)
+        if minimise_coef == nominal_rest["minimise_coef"]:
+            initial_breath_coef = nominal_rest["breath_coef"]
 
     try:
-        # Run basepoints to rest convergence; perturbations warm-start from this state.
+        # Re-equilibrate each sampled base point before its finite differences.
         base_result, IC_final, storage_final, breath_coef, rest_converged = run_state_to_convergence(
             base_sample,
             storage_copy,
             old_Parameters,
+            IC_final=IC_initial,
             state="Rest",
+            breath_coef=initial_breath_coef,
             use_timeout=False,
         )
-
-        minimise_coef = [
-            base_sample["GV_dead"],
-            base_sample["V0_dead"],
-            base_sample["E_rs"],
-            base_sample["R_rs"],
-        ]
 
         if is_failed_state_result(base_result):
             print("fail", dict(list(base_sample.items())[:10]))
@@ -855,12 +895,14 @@ def run_basepoint(base_sample, old_Parameters):
             "storage_final": storage_final,
             "breath_coef": breath_coef,
             "minimise_coef": minimise_coef,
+            "rest_converged": rest_converged,
         }
     except Exception as e:
         print(f"[BASEPOINT EXCEPTION] idx={base_sample}")
         return None
 
-def parallel_simulations(param_samples, n_jobs, old_parameters, save_path='Result_DGSM_union.npy'):
+def parallel_simulations(param_samples, n_jobs, old_parameters, save_path='Result_DGSM_union.npy',
+                         nominal_rest=None):
     results_all = []
 
     if os.path.exists(save_path):
@@ -870,8 +912,8 @@ def parallel_simulations(param_samples, n_jobs, old_parameters, save_path='Resul
     block_size = len(param_samples[0]) + 1
     param_blocks = [param_samples[i:i + block_size] for i in range(0, len(param_samples), block_size)]
 
-    # run base points first
-    base_results = Parallel(n_jobs=n_jobs, max_nbytes='128K')(delayed(run_basepoint)(params[0], old_parameters)
+    # Reuse the one participant nominal resting seed for every sampled base point.
+    base_results = Parallel(n_jobs=n_jobs, max_nbytes='128K')(delayed(run_basepoint)(params[0], old_parameters, nominal_rest)
         for params in param_blocks)
 
 
@@ -896,10 +938,12 @@ def parallel_simulations(param_samples, n_jobs, old_parameters, save_path='Resul
         elapsed = time.time() - t0
         rest_nonconverged = sum(not res["rest_converged"] for res in results_perturbations)
         exercise_nonconverged = sum(not res["exercise_converged"] for res in results_perturbations)
+        # Timed MRI exercise reports completion, rather than steady-state convergence.
+        exercise_status = "Exercise incomplete" if "max_watts" in old_parameters else "Exercise non-converged"
         print(
             f"Block {i}/{len(param_blocks)}: {elapsed:.1f}s | "
             f"Rest non-converged: {rest_nonconverged}/{len(block)} | "
-            f"Exercise non-converged: {exercise_nonconverged}/{len(block)}"
+            f"{exercise_status}: {exercise_nonconverged}/{len(block)}"
         )
 
         results_block = [res["result"] for res in results_perturbations]
@@ -915,8 +959,112 @@ def parallel_simulations(param_samples, n_jobs, old_parameters, save_path='Resul
     return results_all
 
 
+# Stage changes end exactly on the protocol clock and preserve the delay history.
+def integrate_timed_phase(params, storage, old_parameters, IC, breath_coef,
+                          start, duration, pedalling, forcing, observers=(),
+                          extract_last=False):
+    end = start + duration
+    clock = start
+    result = zero_state_result()
+    while clock < end - 1e-9:
+        next_clock = min(clock + OBSERVATION_CHUNK_SECONDS, end)
+        result, IC, storage, breath_coef = safe_simulate_cpu(
+            params, storage, old_parameters, IC_initial=IC,
+            state="Exercise" if pedalling else "Rest", breath_coef=breath_coef,
+            exercise_start_time=start if pedalling else np.inf,
+            duration=next_clock-clock, start_time=clock,
+            extract_outputs=extract_last and next_clock == end,
+            metabolic_forcing=forcing,
+        )
+        if IC is None or storage is None:
+            raise RuntimeError("Integration failed during the MRI protocol.")
+        for observer in observers:
+            observer.update(storage, clock, next_clock)
+        clock = next_clock
+    return result, IC, storage, breath_coef, end
+
+
+# Use one fixed CO2/O2 increment ratio throughout the ramp, matching the AT reference.
+def stage_metabolic_forcing(old_parameters, watts, pedalling):
+    o_rest, c_rest = old_parameters["MRO2"], old_parameters["MRCO2"]
+    if not pedalling:
+        return o_rest, c_rest
+    o_target = o_rest + (10.8*watts + 3.5*old_parameters["weight_kg"])/60000
+    return o_target, c_rest + old_parameters["rho_delta"]*(o_target-o_rest)
+
+
+# Participant timings are assumptions unless a measured workload history is supplied.
+def make_mri_protocol(max_watts, initial_watts=0.0, final_stage_seconds=30.0,
+                      scan_delay_seconds=0.0, scan_seconds=27.0):
+    times = np.asarray([scan_delay_seconds, scan_seconds], dtype=float)
+    if not np.isfinite(times).all() or scan_seconds <= 0 or scan_delay_seconds < 0:
+        raise ValueError("Use a positive acquisition duration and a nonnegative scan delay.")
+    stages = build_workload_stages(max_watts, initial_watts, final_stage_seconds)
+    return {"initial_watts": initial_watts, "final_stage_seconds": final_stage_seconds,
+            "scan_delay_seconds": scan_delay_seconds,
+            "scan_seconds": scan_seconds, "stages": stages,
+            "cycling_seconds": sum(stage[1] for stage in stages)}
+
+
+# Reuse the converged final-ten-beat rest summary; only exercise/recovery need timing.
+def run_mri_protocol(params, storage, old_parameters, IC, breath_coef,
+                     rest_result, rest_converged=True, diagnostics_observer=None):
+    protocol = old_parameters.get("mri_protocol") or make_mri_protocol(old_parameters["max_watts"])
+    clock = float(storage["all_time"][(storage["i"].item()-1) % BUFFER_LIMIT])
+    resting_forcing = stage_metabolic_forcing(old_parameters, 0.0, False)
+    rest_result = np.asarray(rest_result, dtype=float)
+    # The nominal preflight can copy diagnostics without changing DGSM observations.
+    if diagnostics_observer is not None:
+        diagnostics_observer.snapshot("Rest", storage, IC, rest_result, clock)
+
+    # The clock below is independent of how long numerical equilibration took.
+    exercise_start = clock
+    cessation = exercise_start + protocol["cycling_seconds"]
+    peak_observer = WindowObserver(exercise_start, cessation)
+    for watts, seconds, pedalling in protocol["stages"]:
+        _, IC, storage, breath_coef, clock = integrate_timed_phase(
+            params, storage, old_parameters, IC, breath_coef, clock, seconds, pedalling,
+            stage_metabolic_forcing(old_parameters, watts, pedalling), (peak_observer,),
+        )
+    if diagnostics_observer is not None:
+        diagnostics_observer.snapshot("Cessation", storage, IC, None, clock)
+
+    # Restore resting demand at cessation without resetting residual metabolic states.
+    if protocol["scan_delay_seconds"] > 0:
+        _, IC, storage, breath_coef, clock = integrate_timed_phase(
+            params, storage, old_parameters, IC, breath_coef, clock,
+            protocol["scan_delay_seconds"], False, resting_forcing,
+        )
+    scan_observer = WindowObserver(clock, clock + protocol["scan_seconds"])
+    # Stream the full acquisition before the circular buffer discards its start.
+    scan_observers = (scan_observer,) + ((diagnostics_observer,) if diagnostics_observer is not None else ())
+    scan_result, IC, storage, breath_coef, clock = integrate_timed_phase(
+        params, storage, old_parameters, IC, breath_coef, clock, protocol["scan_seconds"],
+        False, resting_forcing, scan_observers, extract_last=True,
+    )
+    scan_targets = scan_observer.summary()
+    recovery_mean_hr = float(scan_targets[0])
+    # Exercise HR is peak cycling HR; the four volumes and two pressures are recovery-window means.
+    scan_targets[0] = peak_observer.peak_hr
+    if not np.isfinite(scan_targets).all():
+        raise RuntimeError("MRI protocol observations are not finite.")
+    scan_result = np.asarray(scan_result, dtype=float)
+    scan_result[MRI_TARGET_COLUMNS] = scan_targets
+    if diagnostics_observer is not None:
+        diagnostics_observer.snapshot("Recovery", storage, IC, scan_result, clock)
+    # Keep the legacy result flag; here True means the prescribed protocol completed.
+    return {"result": rest_result.tolist() + scan_result.tolist(),
+            "rest_converged": rest_converged, "exercise_converged": True,
+            "exercise_protocol": "ramp with timed recovery acquisition",
+            "cycling_seconds": protocol["cycling_seconds"],
+            "scan_start_after_cessation_seconds": protocol["scan_delay_seconds"],
+            "scan_seconds": protocol["scan_seconds"],
+            "peak_hr_beats_s": float(peak_observer.peak_hr),
+            "recovery_mean_hr_beats_s": recovery_mean_hr}
+
+
 def run_simulation(params, storage_final, Old_Parameters, IC_final, breath_coef, minimise_coef,
-                   base_gas_tensions, base_gas_params):
+                   base_gas_tensions, base_gas_params, diagnostics_observer=None):
     storage_final = copy_storage(storage_final)
     # Preserve warm start unless this perturbation changes the gas-coordinate.
     # Only then re-derive contents from the base point's tensions using this sample's parameters.
@@ -946,6 +1094,17 @@ def run_simulation(params, storage_final, Old_Parameters, IC_final, breath_coef,
             "exercise_converged": False,
         }
 
+    # MRI participants use the workload clock; legacy non-participant callers stay compatible.
+    if "max_watts" in Old_Parameters:
+        try:
+            return run_mri_protocol(params, storage_final, Old_Parameters, IC_final,
+                                    local_breath_coef, result_rest, rest_converged,
+                                    diagnostics_observer)
+        except Exception as exc:
+            print(f"MRI protocol failed: {exc}")
+            return {"result": zero_union_result(), "rest_converged": rest_converged,
+                    "exercise_converged": False}
+
     latest_nonzero_index = (storage_final["i"].item() - 1) % BUFFER_LIMIT
     exercise_start_time = storage_final["all_time"][latest_nonzero_index]
 
@@ -974,10 +1133,9 @@ def run_simulation(params, storage_final, Old_Parameters, IC_final, breath_coef,
 
 
 
-if __name__ == "__main__":
-    lower = 0.5
-    upper = 1.5
-    sp = ProblemSpec({
+# Share the exact DGSM centres with the nominal preflight instead of duplicating them.
+def build_problem_spec(lower=0.5, upper=1.5):
+    problem = {
         'names': [
             # gas
             "beta2", "C2", "K2", "a2",
@@ -1148,13 +1306,38 @@ if __name__ == "__main__":
             [0.04 * lower, 0.04 * upper], [80 * lower, 80 * upper],
             [0.1 * 0.8, 0.1 * 1.2], [0.3 * 0.8, 0.3 * 1.2], [0.45 * 0.85, 0.45 * 1.15], [0.93 * 0.95, 0.93 * 1.05],
             [0.0873 * lower, 0.0873 * upper], [1.2 * 0.85, 1.2 * 1.15], [1.2 * 0.85, 1.2 * 1.15], [181 * lower, 181 * upper], [31 * lower, 31 * upper]]
-    })
+    }
+    # Preserve each parameter's existing relative range, centred on the paper MAP.
+    # Most ranges are +/-50%; timing/shape parameters retain their narrower ranges.
+    centres = load_map_parameters()
+    old_bounds = np.asarray(problem["bounds"], dtype=float)
+    old_centres = old_bounds.mean(axis=1)
+    map_centres = np.asarray([centres[name] for name in problem["names"]])
+    ratios = map_centres / old_centres
+    if not np.isfinite(ratios).all() or np.any(ratios <= 0):
+        raise ValueError("MAP centres must be finite and retain the reference parameter signs.")
+    problem["bounds"] = (old_bounds * ratios[:, None]).tolist()
+    problem["nominal_parameters"] = {name: centres[name] for name in problem["names"]}
+    return ProblemSpec(problem)
 
-    ############################################################################################
-    # copy fixed parameters and bring in perturbed parameters too to form reference parameters.
+
+def load_map_parameters():
+    """Read the active MAP dictionary from the exact root check.py file."""
+    parameters = runpy.run_path(str(MAP_PARAMETERS_PATH))["Parameters"]
+    return {str(name): float(value) for name, value in parameters.items()}
+
+
+def nominal_reference(problem):
+    # Keep the exact MAP decimals, rather than rounding tiny physiological values.
     reference = Old_Parameters.copy()
-    reference.update({name: float(f"{np.mean(bounds):.12g}")
-                      for name, bounds in zip(sp["names"], sp["bounds"])})
+    reference.update(problem["nominal_parameters"])
+    return reference
+
+
+# The launcher passes its in-memory nominal seed without rerunning or replotting it.
+def main(argv=None, nominal_rest=None):
+    sp = build_problem_spec()
+    reference = nominal_reference(sp)
     param_keys = list(sp["names"])
 
     # CSV coding and units must be supplied explicitly; no participant data is bundled.
@@ -1170,9 +1353,20 @@ if __name__ == "__main__":
     parser.add_argument("--rq-rest", type=float, default=0.8)
     parser.add_argument("--rq-exercise", type=float, default=0.85)
     parser.add_argument("--posture-factor", type=float, default=0.88)
+    parser.add_argument("--check-only", action="store_true",
+                        help="Run and plot the nominal simulation, then exit before finite differences")
+    # Unknown initial workload/final-stage exposure remain explicit timing assumptions.
+    parser.add_argument("--initial-watts", type=float, default=0.0,
+                        help="Assumed minimal workload during the initial 60 seconds")
+    parser.add_argument("--final-stage-seconds", type=float, default=30.0,
+                        help="Assumed exposure at MAX WATTS, in (0, 60] seconds")
+    parser.add_argument("--scan-delay-seconds", type=float, default=0.0,
+                        help="Recovery delay between cessation and volume acquisition")
+    parser.add_argument("--scan-seconds", type=float, default=27.0,
+                        help="Duration of the post-exercise volume acquisition")
     parser.add_argument("--output-dir", type=Path,
                         default=Path(__file__).resolve().parent / "DGSM_participants")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     with args.csv.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         required = {"BRU", "Sex", "Weight", "Height", "age", "MAX WATTS"}
@@ -1182,6 +1376,8 @@ if __name__ == "__main__":
                 if args.participant_id is None or row["BRU"] == args.participant_id]
     if not selected:
         parser.error("No matching participants found.")
+    if nominal_rest is not None and len(selected) != 1:
+        parser.error("A supplied nominal resting state must belong to one selected participant.")
     ids = [row["BRU"] for _, row in selected]
     if any(not value.strip() for value in ids) or len(set(ids)) != len(ids):
         parser.error("Selected BRU identifiers must be nonempty and unique.")
@@ -1190,31 +1386,72 @@ if __name__ == "__main__":
     prepared = []
     for index, row in selected:
         sex = {args.male_value: "male", args.female_value: "female"}.get(row["Sex"])
-        height_cm = float(row["Height"])*100
+        # Honour the declared CSV height unit before calculating participant inputs.
+        height_cm = float(row["Height"])*(100 if args.height_unit == "m" else 1)
         fixed = participant_parameters(float(row["Weight"]), height_cm,
                                        float(row["age"]), sex, float(row["MAX WATTS"]),
                                        reference, args.rq_rest, args.rq_exercise,
                                        args.posture_factor)
+        # Freeze this participant's protocol before generating any DGSM perturbations.
+        fixed["mri_protocol"] = make_mri_protocol(
+            fixed["max_watts"], args.initial_watts, args.final_stage_seconds,
+            args.scan_delay_seconds, args.scan_seconds,
+        )
         destination = args.output_dir / f"participant_{index:03d}"
         prepared.append((row["BRU"], fixed, destination))
 
-    # Share a reference design; participant volume columns are rescaled below.
+    # Share a reference design; defer creating/loading X until nominal checks pass.
     args.output_dir.mkdir(parents=True, exist_ok=True)
     problem = {"names": sp["names"], "bounds": sp["bounds"],
-               "basepoints": args.basepoints, "seed": args.seed}
+               "basepoints": args.basepoints, "seed": args.seed,
+               "parameter_reference": str(MAP_PARAMETERS_PATH)}
     problem_path = args.output_dir / "problem.json"
     design_path = args.output_dir / "DGSM_X.npy"
-    if problem_path.exists() and design_path.exists():
-        X = np.load(design_path, mmap_mode="r")
-    else:
-        X = finite_diff.sample(sp, args.basepoints, seed=args.seed)
-        np.save(design_path, X)
-        problem_path.write_text(json.dumps(problem, indent=2), encoding="utf-8")
-
+    X = None
 
     # Centre each sampled volume's +/-50% bounds on its participant nominal value.
     for participant_id, fixed, destination in prepared:
-        destination.mkdir()
+        # Nominal-only debugging can be repeated after editing the synthetic CSV.
+        destination.mkdir(exist_ok=args.check_only)
+        if args.check_only:
+            basal_nonbrain = fixed["MRTCO2_basal"] - fixed["MRBCO2"]
+            steady_intensity = (
+                (fixed["MRCO2_exercise"] - fixed["MRTCO2_basal"])
+                / (fixed["AT"] - basal_nonbrain)
+            )
+            print(f"Participant {participant_id}: V_tot={fixed['V_tot']:.6f} mL, "
+                  f"volume scale={fixed['participant_volume_scale']:.12g}, "
+                  f"S_CO2={60*fixed['AT']:.9g} L/min, "
+                  f"steady-demand I={steady_intensity:.12g}", flush=True)
+        # Direct batch runs generate exactly one nominal plot/seed per participant.
+        if nominal_rest is None:
+            import sys
+            from Nominal_preflight import run_nominal_preflight
+            preflight = run_nominal_preflight(
+                {"BRU": participant_id}, destination / "Nominal",
+                fixed_parameters=fixed, simulator=sys.modules[__name__])
+            participant_rest = preflight["resting_base"]
+        else:
+            participant_rest = nominal_rest
+            if (participant_rest["participant_id"] != participant_id
+                    or participant_rest["nominal_parameters"] != fixed):
+                parser.error("Nominal resting seed does not match this participant's inputs/settings.")
+        # Debugger: the nominal traces are saved here; check-only never creates X.
+        if args.check_only:
+            print(f"Participant {participant_id}: nominal check complete; "
+                  "finite differences were not generated or simulated.", flush=True)
+            continue
+        if X is None:
+            if problem_path.exists() and design_path.exists():
+                previous = json.loads(problem_path.read_text(encoding="utf-8"))
+                if any(previous.get(key) != problem[key]
+                       for key in ("names", "bounds", "basepoints", "seed")):
+                    raise ValueError("Saved DGSM design uses different ranges/settings. Choose a new --output-dir.")
+                X = np.load(design_path, mmap_mode="r")
+            else:
+                X = finite_diff.sample(sp, args.basepoints, seed=args.seed)
+                np.save(design_path, X)
+                problem_path.write_text(json.dumps(problem, indent=2), encoding="utf-8")
         sampling_scales = np.asarray([
             fixed[name]/reference[name] if name in PARTICIPANT_VOLUME_KEYS else 1.0
             for name in param_keys
@@ -1229,11 +1466,34 @@ if __name__ == "__main__":
         metadata = {"participant_id": participant_id, "nominal_parameters": fixed,
                     "rq_rest": args.rq_rest, "rq_exercise": args.rq_exercise,
                     "posture_factor": args.posture_factor,
-                    "exercise_protocol": "steady-state at MAX WATTS; recovery not implemented"}
+                    "exercise_protocol": "25 W/min ramp with timed recovery acquisition",
+                    "timing_assumptions": fixed["mri_protocol"],
+                    # Rest keeps the original output operator and convergence settings.
+                    "rest_observation": "legacy final-ten-heartbeat summary",
+                    "basepoint_initialization": "participant nominal resting endpoint, then basepoint equilibration",
+                    "exercise_volume_observation": "mean complete-beat extrema during recovery acquisition",
+                    "exercise_pressure_observation": "mean complete-beat P_sa maximum/minimum during recovery acquisition",
+                    "exercise_HR_observation": "peak during cycling",
+                    # Only exercise MRI targets use the prescribed ramp/recovery observations.
+                    "other_output_columns": "legacy endpoint diagnostics"}
         (destination / "participant.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         print(f"Participant {participant_id}: {len(param_keys)} free parameters, "
               f"{args.basepoints} base points")
         parallel_simulations(param_samples, n_jobs=args.n_jobs, old_parameters=fixed,
-                             save_path=str(destination / "DGSM_Result.npy"))
+                             save_path=str(destination / "DGSM_Result.npy"),
+                             nominal_rest=participant_rest)
         # Release these samples before allocating the next participant's design.
         del param_samples
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) == 1:
+        # PyCharm Run/Debug without arguments checks the user's synthetic CSV only.
+        folder = Path(__file__).resolve().parent
+        print("No command-line arguments: running the synthetic nominal check only.", flush=True)
+        main(["--csv", str(folder / "debug_synthetic_reference.csv"),
+              "--height-unit", "m", "--male-value", "M", "--female-value", "F",
+              "--check-only", "--output-dir", str(folder / "Synthetic_nominal_check")])
+    else:
+        main()

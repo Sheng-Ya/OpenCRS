@@ -313,16 +313,16 @@ Parameters = {
     "P_ws": 47,
     "Z": 0.0227,
     "MRBCO2": 0.0009,
-    "MRTCO2_basal": 0.2/60,
-    "MRTO2_basal": 0.25/60,
-    "MRCO2": 0.2/60,
-    "MRO2": 0.25/60,
+    "MRTCO2_basal": 0.1788/60, #  0.2/60, # changed
+    "MRTO2_basal": 0.2234/60, #  0.2/60, # changed
+    "MRCO2": 0.1788/60, # 0.2/60, # changed
+    "MRO2": 0.2234/60, # 0.25/60, # changed
     "lambda1": 0.86,
     "lambda2": 0.489,
     "n": 0.4,
     "P_ao": 0.0,
     "delta_P": 0.1,
-    "AT": (1.5/60),
+    "AT": (2.2596/60), # (1.5/60), # changed
     "dc": 0.015,
     # "lambda1": 0.86,
     # "lambda2": 0.489,

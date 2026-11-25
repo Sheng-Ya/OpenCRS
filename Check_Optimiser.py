@@ -9,7 +9,7 @@
 # V0_dead  = 0.15131603
 #
 # bounds = [(0.4, 3), (0.4, 6)]   # [t1, t2]
-# tolerance = 0.001
+# tolerance = 0.0001
 #
 # required_params = [
 #     0.3,        # lambda1
@@ -147,94 +147,94 @@
 # plt.legend()
 # plt.show()
 
-# import numpy as np
-# from matplotlib import pyplot as plt
-# from scipy.interpolate import CubicSpline
-# from scipy.optimize import minimize, NonlinearConstraint
-# from check import Parameters as params
-# from Resp_Control_Breath_Optimiser import objective
+import numpy as np
+from matplotlib import pyplot as plt
+from scipy.interpolate import CubicSpline
+from scipy.optimize import minimize, NonlinearConstraint
+from check import Parameters as params
+from Resp_Control_Breath_Optimiser_New import objective
 
-# bounds = [(0.4, 3), (0.4, 6)]  # [t1, t2]
-# tolerance = 0.001
+bounds = [(0.4, 9), (0.4, 9)]  # [t1, t2]
+tolerance = 0.0001
 
-# # ------------------------------
-# # FIXED VALUES
-# # ------------------------------
-# VAflow = 0.0673               # constant VAflow
-# E_rs_const = 21.9             # <- set to whatever E_rs you want to keep fixed
-#
-# # Compute VD once since VAflow is constant
-# VD = params["GV_dead"] * VAflow + params["V0_dead"]
-#
-# # ------------------------------
-# # Vary R_rs only
-# # ------------------------------
-# R_rs_values = np.linspace(1.51, 6.04, 500)
-#
-# optimal_t1 = []
-# optimal_t2 = []
-# initial_guess = [1.5, 1.85]
-#
-# for R_rs in R_rs_values:
-#
-#     required_params = [
-#         0.3,
-#         0.289,
-#         0.9,
-#         1000,
-#         10000,
-#         E_rs_const,  # <----- varies
-#         R_rs,  # <----- varies
-#         0.0,
-#     ]
-#
-#     try:
-#         res = minimize(
-#             objective,
-#             x0=np.array(initial_guess[-2:]),
-#             args=(required_params, VAflow, VD, 0.001, tolerance),
-#             method='nelder-mead',
-#             bounds=bounds
-#         )
-#
-#         if res.success:
-#             t1_opt, t2_opt = res.x
-#             optimal_t1.append(t1_opt)
-#             optimal_t2.append(t2_opt)
-#
-#             # good new guess for next iteration
-#             initial_guess.extend(res.x)
-#
-#             print(f"R_rs={R_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
-#
-#         else:
-#             print(f"R_rs={R_rs:.2f} → optimization failed")
-#             optimal_t1.append(np.nan)
-#             optimal_t2.append(np.nan)
-#
-#     except Exception as e:
-#         print(f"R_rs={R_rs:.2f} → error: {e}")
-#         optimal_t1.append(np.nan)
-#         optimal_t2.append(np.nan)
-#
-# # Convert to arrays
-# optimal_t1 = np.array(optimal_t1)
-# optimal_t2 = np.array(optimal_t2)
-#
-# # ------------------------------
-# # Plotting
-# # ------------------------------
-# plt.figure(figsize=(10, 5))
-#
-# plt.scatter(R_rs_values, optimal_t1, label='Optimal t1', marker='o', alpha=0.7, s=10)
-# plt.scatter(R_rs_values, optimal_t2, label='Optimal t2', marker='s', alpha=0.7, s=10)
-#
-# plt.xlabel("R_rs")
-# plt.ylabel("Time (s)")
-# plt.title("Optimal t1 and t2 vs R_rs (VAflow & E_rs constant)")
-# plt.grid(True)
-# plt.legend()
-# plt.show()
+# ------------------------------
+# FIXED VALUES
+# ------------------------------
+VAflow = 0.0673               # constant VAflow
+E_rs_const = 21.9             # <- set to whatever E_rs you want to keep fixed
+
+# Compute VD once since VAflow is constant
+VD = params["GV_dead"] * VAflow + params["V0_dead"]
+
+# ------------------------------
+# Vary R_rs only
+# ------------------------------
+R_rs_values = np.linspace(1.51, 6.04, 500)
+
+optimal_t1 = []
+optimal_t2 = []
+initial_guess = [1.5, 1.85]
+
+for R_rs in R_rs_values:
+
+    required_params = [
+        0.37,
+        6.5,
+        0.42,
+        70.0,
+        2000.0,
+        E_rs_const,  # <----- varies
+        R_rs,  # <----- varies
+        0.0,
+    ]
+
+    try:
+        res = minimize(
+            objective,
+            x0=np.array(initial_guess[-2:]),
+            args=(required_params, VAflow, VD, 0.001, tolerance),
+            method='nelder-mead',
+            bounds=bounds
+        )
+
+        if res.success:
+            t1_opt, t2_opt = res.x
+            optimal_t1.append(t1_opt)
+            optimal_t2.append(t2_opt)
+
+            # good new guess for next iteration
+            initial_guess.extend(res.x)
+
+            print(f"R_rs={R_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
+
+        else:
+            print(f"R_rs={R_rs:.2f} → optimization failed")
+            optimal_t1.append(np.nan)
+            optimal_t2.append(np.nan)
+
+    except Exception as e:
+        print(f"R_rs={R_rs:.2f} → error: {e}")
+        optimal_t1.append(np.nan)
+        optimal_t2.append(np.nan)
+
+# Convert to arrays
+optimal_t1 = np.array(optimal_t1)
+optimal_t2 = np.array(optimal_t2)
+
+# ------------------------------
+# Plotting
+# ------------------------------
+plt.figure(figsize=(10, 5))
+
+plt.scatter(R_rs_values, optimal_t1, label='Optimal t1', marker='o', alpha=0.7, s=10)
+plt.scatter(R_rs_values, optimal_t2, label='Optimal t2', marker='s', alpha=0.7, s=10)
+
+plt.xlabel("R_rs")
+plt.ylabel("Time (s)")
+plt.title("Optimal t1 and t2 vs R_rs (VAflow & E_rs constant)")
+plt.grid(True)
+plt.legend()
+plt.show()
 
 from matplotlib import pyplot as plt
 # Set global style
@@ -249,83 +249,83 @@ plt.rcParams.update({
 })
 #
 #
-# bounds = [(0.4, 3), (0.4, 6)]  # [t1, t2]
-# tolerance = 0.001
-#
-# # ------------------------------
-# # FIXED VALUES
-# # ------------------------------
-# R_rs_const = 3.02            # example constant R_rs (set to yours)
-#
-# # Compute VD once since VAflow is constant
-# VD = params["GV_dead"] * VAflow + params["V0_dead"]
-#
-# # ------------------------------
-# # Vary E_rs only
-# # ------------------------------
-# E_rs_values = np.linspace(10.95, 43.8, 500)    # choose range as needed
-#
-# optimal_t1 = []
-# optimal_t2 = []
-# initial_guess = [1.5, 1.85]
-#
-# for E_rs in E_rs_values:
-#
-#     required_params = [
-#         0.86,
-#         0.489,
-#         1.101,
-#         1000,
-#         10000,
-#         E_rs,  # <----- varies
-#         R_rs_const,  # <----- varies
-#         0.0,
-#     ]
-#
-#     try:
-#         res = minimize(
-#             objective,
-#             x0=np.array(initial_guess[-2:]),
-#             args=(required_params, VAflow, VD, 0.001, tolerance),
-#             method='nelder-mead',
-#             bounds=bounds
-#         )
-#
-#         if res.success:
-#             t1_opt, t2_opt = res.x
-#             optimal_t1.append(t1_opt)
-#             optimal_t2.append(t2_opt)
-#             initial_guess.extend(res.x)
-#             print(f"E_rs={E_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
-#         else:
-#             print(f"E_rs={E_rs:.2f} → optimization failed")
-#             optimal_t1.append(np.nan)
-#             optimal_t2.append(np.nan)
-#
-#     except Exception as e:
-#         print(f"E_rs={E_rs:.2f} → error: {e}")
-#         optimal_t1.append(np.nan)
-#         optimal_t2.append(np.nan)
-#
-#
-# # Convert to arrays
-# optimal_t1 = np.array(optimal_t1)
-# optimal_t2 = np.array(optimal_t2)
-#
-# # ------------------------------
-# # Plotting
-# # ------------------------------
-# plt.figure(figsize=(10, 5))
-#
-# plt.scatter(E_rs_values, optimal_t1, label='Optimal t1', marker='o', alpha=0.7, s=10)
-# plt.scatter(E_rs_values, optimal_t2, label='Optimal t2', marker='s', alpha=0.7, s=10)
-#
-# plt.xlabel("E_rs")
-# plt.ylabel("Time (s)")
-# plt.title("Optimal t1 and t2 vs E_rs (VAflow and R_rs constant)")
-# plt.grid(True)
-# plt.legend()
-# plt.show()
+bounds = [(0.4, 9), (0.4, 9)]  # [t1, t2]
+tolerance = 0.0001
+
+# ------------------------------
+# FIXED VALUES
+# ------------------------------
+R_rs_const = 3.02            # example constant R_rs (set to yours)
+
+# Compute VD once since VAflow is constant
+VD = params["GV_dead"] * VAflow + params["V0_dead"]
+
+# ------------------------------
+# Vary E_rs only
+# ------------------------------
+E_rs_values = np.linspace(10.95, 43.8, 500)    # choose range as needed
+
+optimal_t1 = []
+optimal_t2 = []
+initial_guess = [1.5, 1.85]
+
+for E_rs in E_rs_values:
+
+    required_params = [
+        0.37,
+        6.5,
+        0.42,
+        70.0,
+        2000.0,
+        E_rs,  # <----- varies
+        R_rs_const,  # <----- varies
+        0.0,
+    ]
+
+    try:
+        res = minimize(
+            objective,
+            x0=np.array(initial_guess[-2:]),
+            args=(required_params, VAflow, VD, 0.001, tolerance),
+            method='nelder-mead',
+            bounds=bounds
+        )
+
+        if res.success:
+            t1_opt, t2_opt = res.x
+            optimal_t1.append(t1_opt)
+            optimal_t2.append(t2_opt)
+            initial_guess.extend(res.x)
+            print(f"E_rs={E_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
+        else:
+            print(f"E_rs={E_rs:.2f} → optimization failed")
+            optimal_t1.append(np.nan)
+            optimal_t2.append(np.nan)
+
+    except Exception as e:
+        print(f"E_rs={E_rs:.2f} → error: {e}")
+        optimal_t1.append(np.nan)
+        optimal_t2.append(np.nan)
+
+
+# Convert to arrays
+optimal_t1 = np.array(optimal_t1)
+optimal_t2 = np.array(optimal_t2)
+
+# ------------------------------
+# Plotting
+# ------------------------------
+plt.figure(figsize=(10, 5))
+
+plt.scatter(E_rs_values, optimal_t1, label='Optimal t1', marker='o', alpha=0.7, s=10)
+plt.scatter(E_rs_values, optimal_t2, label='Optimal t2', marker='s', alpha=0.7, s=10)
+
+plt.xlabel("E_rs")
+plt.ylabel("Time (s)")
+plt.title("Optimal t1 and t2 vs E_rs (VAflow and R_rs constant)")
+plt.grid(True)
+plt.legend()
+plt.show()
 
 
 
@@ -337,114 +337,112 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy.interpolate import CubicSpline
 from scipy.optimize import minimize
-from Resp_Control_Breath_Optimiser import objective
-
-#
-#
-# bounds = [(0.4, 3), (0.4, 6)]  # [t1, t2]
-# tolerance = 0.001
-#
-# # ------------------------------
-# # FIXED VAflow
-# # ------------------------------
-# VAflow = 0.0673   # <-- your preferred constant value
-#
-# # ------------------------------
-# # NEW: combinations of E_rs and R_rs
-# # ------------------------------
-# E_rs_values = np.linspace(21.9*0.5, 21.9*1.2, 50)   # example range
-# R_rs_values = np.linspace(3.02*0.8, 3.02*1.5, 50)   # example range
-#
-# # create Cartesian product of E_rs × R_rs
-# E_grid, R_grid = np.meshgrid(E_rs_values, R_rs_values)
-# E_flat = E_grid.flatten()
-# R_flat = R_grid.flatten()
-#
-# # ------------------------------
-# # Compute VD only once (VAflow is constant)
-# # ------------------------------
-# GV_dead = 0.1698
-# V0_dead = 0.1587
-# VD = GV_dead * VAflow + V0_dead
-#
-# optimal_t1 = []
-# optimal_t2 = []
-# failed = []
-# initial_guess = [1.5, 1.85]
-#
-# for idx in range(len(E_flat)):
-#     E_rs = E_flat[idx]
-#     R_rs = R_flat[idx]
-#
-#     required_params = [
-#         0.86,
-#         0.689,
-#         0.5,
-#         50,
-#         1000,
-#         E_rs,  # <----- varies
-#         R_rs,  # <----- varies
-#         0.0,
-#     ]
-#
-#     try:
-#         res = minimize(
-#             objective,
-#             x0=np.array(initial_guess[-2:]),
-#             args=(required_params, VAflow, VD, 0.001, tolerance),
-#             method='nelder-mead',
-#             bounds=bounds
-#         )
-#
-#         if res.success:
-#             t1_opt, t2_opt = res.x
-#             optimal_t1.append(t1_opt)
-#             optimal_t2.append(t2_opt)
-#
-#             initial_guess.extend(res.x)
-#
-#             print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
-#         else:
-#             print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → optimization failed")
-#             optimal_t1.append(np.nan)
-#             optimal_t2.append(np.nan)
-#
-#     except Exception as e:
-#         print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → error: {e}")
-#         optimal_t1.append(np.nan)
-#         optimal_t2.append(np.nan)
-#
-# # Convert to arrays
-# optimal_t1 = np.array(optimal_t1)
-# optimal_t2 = np.array(optimal_t2)
-#
-# # reshape back to the grid shape for nicer plotting
-# T1_grid = optimal_t1.reshape(E_grid.shape)
-# T2_grid = optimal_t2.reshape(E_grid.shape)
-#
-# # ------------------------------
-# # Plotting
-# # ------------------------------
-# plt.figure(figsize=(12,5))
-#
-# plt.subplot(1,2,1)
-# plt.title("Optimal t1 vs E_rs and R_rs")
-# plt.xlabel("E_rs")
-# plt.ylabel("R_rs")
-# plt.contourf(E_grid, R_grid, T1_grid, levels=20)
-# plt.colorbar(label="t1 (s)")
-#
-# plt.subplot(1,2,2)
-# plt.title("Optimal t2 vs E_rs and R_rs")
-# plt.xlabel("E_rs")
-# plt.ylabel("R_rs")
-# plt.contourf(E_grid, R_grid, T2_grid, levels=20)
-# plt.colorbar(label="t2 (s)")
-#
-# plt.tight_layout()
-# plt.show()
+from Resp_Control_Breath_Optimiser_New import objective
 
 
+
+bounds = [(0.4, 9), (0.4, 9)]  # [t1, t2]
+tolerance = 0.0001
+
+# ------------------------------
+# FIXED VAflow
+# ------------------------------
+VAflow = 0.0673   # <-- your preferred constant value
+
+# ------------------------------
+# NEW: combinations of E_rs and R_rs
+# ------------------------------
+E_rs_values = np.linspace(21.9*0.5, 21.9*1.2, 50)   # example range
+R_rs_values = np.linspace(3.02*0.8, 3.02*1.5, 50)   # example range
+
+# create Cartesian product of E_rs × R_rs
+E_grid, R_grid = np.meshgrid(E_rs_values, R_rs_values)
+E_flat = E_grid.flatten()
+R_flat = R_grid.flatten()
+
+# ------------------------------
+# Compute VD only once (VAflow is constant)
+# ------------------------------
+GV_dead = 0.1698
+V0_dead = 0.1587
+VD = GV_dead * VAflow + V0_dead
+
+optimal_t1 = []
+optimal_t2 = []
+failed = []
+initial_guess = [1.5, 1.85]
+
+for idx in range(len(E_flat)):
+    E_rs = E_flat[idx]
+    R_rs = R_flat[idx]
+
+    required_params = [
+        0.37,
+        6.5,
+        0.42,
+        70.0,
+        2000.0,
+        E_rs,  # <----- varies
+        R_rs,  # <----- varies
+        0.0,
+    ]
+
+    try:
+        res = minimize(
+            objective,
+            x0=np.array(initial_guess[-2:]),
+            args=(required_params, VAflow, VD, 0.001, tolerance),
+            method='nelder-mead',
+            bounds=bounds
+        )
+
+        if res.success:
+            t1_opt, t2_opt = res.x
+            optimal_t1.append(t1_opt)
+            optimal_t2.append(t2_opt)
+
+            initial_guess.extend(res.x)
+
+            print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → t1={t1_opt:.3f}, t2={t2_opt:.3f}")
+        else:
+            print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → optimization failed")
+            optimal_t1.append(np.nan)
+            optimal_t2.append(np.nan)
+
+    except Exception as e:
+        print(f"E_rs={E_rs:.2f}, R_rs={R_rs:.2f} → error: {e}")
+        optimal_t1.append(np.nan)
+        optimal_t2.append(np.nan)
+
+# Convert to arrays
+optimal_t1 = np.array(optimal_t1)
+optimal_t2 = np.array(optimal_t2)
+
+# reshape back to the grid shape for nicer plotting
+T1_grid = optimal_t1.reshape(E_grid.shape)
+T2_grid = optimal_t2.reshape(E_grid.shape)
+
+# ------------------------------
+# Plotting
+# ------------------------------
+plt.figure(figsize=(12,5))
+
+plt.subplot(1,2,1)
+plt.title("Optimal t1 vs E_rs and R_rs")
+plt.xlabel("E_rs")
+plt.ylabel("R_rs")
+plt.contourf(E_grid, R_grid, T1_grid, levels=20)
+plt.colorbar(label="t1 (s)")
+
+plt.subplot(1,2,2)
+plt.title("Optimal t2 vs E_rs and R_rs")
+plt.xlabel("E_rs")
+plt.ylabel("R_rs")
+plt.contourf(E_grid, R_grid, T2_grid, levels=20)
+plt.colorbar(label="t2 (s)")
+
+plt.tight_layout()
+plt.show()
 
 
 
@@ -456,8 +454,10 @@ from Resp_Control_Breath_Optimiser import objective
 
 
 
-bounds = [(0.5, 6), (0.5, 9)]  # [t1, t2]
-tolerance = 0.001
+
+
+bounds = [(0.5, 9), (0.5, 9)]  # [t1, t2]
+tolerance = 0.0001
 
 VAflow_vals = np.linspace(0.01, 1.2, 200)
 # VAflow_repeated = np.linspace(0.03, 1.6, 200)
@@ -474,11 +474,11 @@ initial_guess = [1.5, 1.85]
 for idx, VAflow in enumerate(VAflow_vals):
     VD_volume = VD[idx]
     required_params = [
-        0.86,
-        0.489,
-        0.4,
-        50,
-        1000,
+        0.37,
+        6.5,
+        0.42,
+        70.0,
+        2000.0,
         21.9,
         3.02,
         0.0,
@@ -573,7 +573,7 @@ plt.show()
 
 # dt = 0.001
 # bounds = [(1, 3), (1.5, 6)]  # [t1, t2] bounds
-# tolerance = 0.001
+# tolerance = 0.0001
 # opt = BreathOptimiser(params, VAflow, VD, dt, tolerance)
 #
 # t1_vals = np.linspace(1, 3, 30)

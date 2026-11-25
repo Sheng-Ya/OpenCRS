@@ -695,6 +695,8 @@ if __name__ == "__main__":
     )
 
     index = np.where(Next_Conditions["time_history"] == 1e6)[0][0] - 1
+    from compare_mri_runs import save_run
+    save_run("original", Next_Conditions, index, solution, state_variable_names, {**Parameters, **new_params})
     # print(HR)
     print(len(Next_Conditions["time_history"][:index]))
 

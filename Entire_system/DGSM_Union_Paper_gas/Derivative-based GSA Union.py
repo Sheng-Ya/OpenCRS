@@ -18,8 +18,8 @@ COVERAGE = 0.90
 MIN_FRAC = 0.02
 JACCARD_TOL = 0.95
 
-X_FILENAME = "DGSM_500_X_union_50_27_08_gas.npy"
-RESULT_FILENAME = "DGSM_500_Result_union_50_27_08_gas.npy"
+X_FILENAME = "DGSM_500_X_union_50_27_08_gas.npy" # change
+RESULT_FILENAME = "DGSM_500_Result_union_50_27_08_gas.npy" # change
 
 OUTPUT_NAMES_BASE = [
     "Heart Rate", "LV Systolic Pressure", "LV Diastolic Pressure", "LV EDV", "LV ESV",
@@ -45,8 +45,17 @@ TARGET_NAMES_BASE = [
     "Minute Ventilation", "PaO2", "PaCO2",
 ]
 
+PLOT_LABEL_REPLACEMENTS = {
+    "Max RV Volume": "RV EDV",
+    "Min RV Volume": "RV ESV",
+    "Max RV Pressure": "RV Systolic Pressure",
+    "Min RV Pressure": "RV Diastolic Pressure",
+    "Max LV Pressure Deriv": "Max LV Pressure Derivative",
+    "Max RV Pressure Deriv": "Max RV Pressure Derivative",
+}
 
-def build_problem_spec(lower: float, upper: float) -> ProblemSpec:
+
+def build_problem_spec(lower: float, upper: float) -> ProblemSpec: # change
     return ProblemSpec({
         'names': [
             # gas
@@ -335,6 +344,12 @@ def format_text_block(
     return "\n".join(lines)
 
 
+def plot_output_label(output_name: str) -> str:
+    """Return the publication label without changing result-column names."""
+    condition, base_name = output_name.split(" ", 1)
+    return f"{condition} {PLOT_LABEL_REPLACEMENTS.get(base_name, base_name)}"
+
+
 def main() -> None:
     lower = 1 - PERCENTAGE / 100
     upper = 1 + PERCENTAGE / 100
@@ -411,7 +426,10 @@ def main() -> None:
         output_path = BASE_DIR / f"DGSM_Union_{condition}.txt"
         output_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
 
-    cache_output_names = np.asarray(target_names, dtype=str)
+    cache_output_names = np.asarray(
+        [plot_output_label(name) for name in target_names],
+        dtype=str,
+    )
     dgsm_matrix = np.stack(
         [analysis_by_output[name]["dgsm"] for name in target_names]
     )
@@ -432,7 +450,7 @@ def main() -> None:
         source_result=np.asarray(RESULT_FILENAME),
     )
 
-    save_condition_figures(
+    condition_figure_paths = save_condition_figures(
         cache_path=plot_cache_path,
         output_dir=PLOTS_DIR,
         percentage=PERCENTAGE,
@@ -440,6 +458,9 @@ def main() -> None:
         min_frac=MIN_FRAC,
         dpi=300,
     )
+    for figure_path in condition_figure_paths:
+        print(f"Wrote: {figure_path}")
+        print(f"Wrote: {figure_path.with_suffix('.pdf')}")
 
     convergence_cache_path = PLOTS_DIR / "convergence_metrics.npz"
     compute_convergence_cache(
@@ -461,7 +482,7 @@ def main() -> None:
     convergence_figure_path = (
         PLOTS_DIR / "appendix_convergence_summary.png"
     )
-    save_convergence_summary_from_cache(
+    convergence_png_path = save_convergence_summary_from_cache(
         cache_path=convergence_cache_path,
         output_path=convergence_figure_path,
         coverage=COVERAGE,
@@ -469,6 +490,8 @@ def main() -> None:
         jaccard_tol=JACCARD_TOL,
         dpi=250,
     )
+    print(f"Wrote: {convergence_png_path}")
+    print(f"Wrote: {convergence_png_path.with_suffix('.pdf')}")
 
 
 if __name__ == "__main__":

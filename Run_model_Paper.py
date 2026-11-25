@@ -25,6 +25,8 @@ BUFFER_LIMIT = 80000
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_CACHE_PATH = SCRIPT_DIR / "Run_model_Paper_cache.pkl"
 LOAD_RUN_CACHE = True
+# The 400 s cache was 3.8 GB; at max_time = 1150 expect ~11 GB on disk, and the write
+# competes for RAM with solve_ivp's own accumulated trajectory.
 SAVE_RUN_CACHE = True
 REFRESH_RUN_CACHE = False  # Set True when model parameters/ICs changed and the ODE must rerun.
 SIMULATION_RESULT_NAMES = (
@@ -63,8 +65,11 @@ PAPER_COLORS = {
 }
 
 min_time = 10 # Minimum time in seconds before checking
-max_time = 400 # Maximum time limit to avoid infinite loops
+max_time = 1630 # Maximum time limit to avoid infinite loops
 time_step = 200  # Chunk size per solve
+
+PLOT_TRIM_SECONDS = 40.0
+REGULATION_PANEL_OUTPUT = SCRIPT_DIR / "Run_model_Paper_regulation_six_panel.png"
 
 
 def style_paper_legend(legend):
@@ -77,7 +82,7 @@ def style_paper_legend(legend):
     return legend
 
 
-def apply_paper_axis_style(ax, *, show_legend=True):
+def apply_paper_axis_style(ax, *, show_legend=True, legend_kwargs=None):
     ax.set_facecolor("white")
     ax.grid(False)
 
@@ -94,7 +99,274 @@ def apply_paper_axis_style(ax, *, show_legend=True):
     if not show_legend:
         return None
 
-    return style_paper_legend(ax.legend(loc="best", frameon=True))
+    kwargs = {"loc": "best", "frameon": True}
+    if legend_kwargs:
+        kwargs.update(legend_kwargs)
+    return style_paper_legend(ax.legend(**kwargs))
+
+
+def _binned_band(ax, t, y, label, color, nbins=1600, lw=2.0):
+    """Draw a trace as a per-bin min-max band with its mean on top.
+
+    These traces carry ~4.5M samples over 1150 s. Drawn raw, a pulsatile signal
+    renders as a solid block. Binning in time keeps the range of the reference
+    figure and puts the mean trajectory back on top of it.
+
+    `t` must be ascending, which time_history is.
+    """
+    t = np.asarray(t)
+    y = np.asarray(y)
+    if t.size == 0:
+        return
+    edges = np.linspace(t[0], t[-1], nbins + 1)
+    starts = np.searchsorted(t, edges[:-1], side="left")
+    ends = np.searchsorted(t, edges[1:], side="left")
+    keep = ends > starts
+    if not np.any(keep):
+        ax.plot(t, y, label=label, color=color, linewidth=lw)
+        return
+    idx = starts[keep]
+    counts = np.diff(np.append(idx, t.size))
+    centres = (0.5 * (edges[:-1] + edges[1:]))[keep]
+    lo = np.minimum.reduceat(y, idx)
+    hi = np.maximum.reduceat(y, idx)
+    mean = np.add.reduceat(y, idx) / counts
+
+    # Only shade where the signal actually oscillates within a bin; for a smooth
+    # trace the band collapses onto the mean line and adds nothing.
+    if np.nanmax(hi - lo) > 1e-9:
+        ax.fill_between(centres, lo, hi, color=color, alpha=0.28, linewidth=0.0)
+    ax.plot(centres, mean, label=label, color=color, linewidth=lw)
+
+
+def _beat_averaged_trace(ax, t, y, ventricular_activation, label, color, lw=2.0):
+    """Draw one time-weighted mean per complete cardiac cycle.
+
+    A new beat starts when ventricular activation rises from zero. Integrating
+    over each interval avoids bias from the solver's irregular evaluation times.
+    """
+    t = np.asarray(t)
+    y = np.asarray(y)
+    ventricular_activation = np.asarray(ventricular_activation)
+    if t.size < 2:
+        return
+
+    activation_eps = 1e-8
+    beat_starts = np.flatnonzero(
+        (ventricular_activation[:-1] <= activation_eps)
+        & (ventricular_activation[1:] > activation_eps)
+    ) + 1
+    if beat_starts.size < 2:
+        ax.plot(t, y, label=label, color=color, linewidth=lw)
+        return
+
+    beat_times = np.empty(beat_starts.size - 1)
+    beat_means = np.empty(beat_starts.size - 1)
+    for j, (start, end) in enumerate(zip(beat_starts[:-1], beat_starts[1:])):
+        cycle_t = t[start:end + 1]
+        cycle_y = y[start:end + 1]
+        duration = cycle_t[-1] - cycle_t[0]
+        beat_times[j] = 0.5 * (cycle_t[0] + cycle_t[-1])
+        beat_means[j] = np.sum(
+            0.5 * (cycle_y[:-1] + cycle_y[1:]) * np.diff(cycle_t)
+        ) / duration
+
+    ax.plot(beat_times, beat_means, label=label, color=color, linewidth=lw, zorder=4)
+
+
+def _raw_trace(ax, t, y, label, color, max_points=200000, lw=2.0, alpha=1.0, zorder=None):
+    """Draw instantaneous signal values without temporal averaging.
+
+    By default, a bounded stride keeps rendering practical while retaining
+    actual samples rather than replacing them with per-bin means. Set
+    ``max_points=None`` when every stored sample should be drawn.
+    """
+    t = np.asarray(t)
+    y = np.asarray(y)
+    if t.size == 0:
+        return
+
+    if max_points is None:
+        plot_t = t
+        plot_y = y
+    else:
+        step = max(1, int(np.ceil(t.size / max_points)))
+        sample_idx = np.arange(0, t.size, step)
+        if sample_idx[-1] != t.size - 1:
+            sample_idx = np.append(sample_idx, t.size - 1)
+        plot_t = t[sample_idx]
+        plot_y = y[sample_idx]
+    ax.plot(
+        plot_t,
+        plot_y,
+        label=label,
+        color=color,
+        linewidth=lw,
+        alpha=alpha,
+        zorder=zorder,
+    )
+
+
+def _savefig_unlocked(fig, output_path):
+    """Save `fig` as PNG and PDF, falling back if the PNG target is locked.
+
+    On Windows an image viewer holding the PNG open (PyCharm's preview tab,
+    Photos) memory-maps it, and the write fails with OSError 22 rather than a
+    plain permission error. Losing a figure to that after the whole run is
+    wasteful, so retry under a suffixed name instead of raising.
+    """
+    output_path = Path(output_path)
+    pdf_path = output_path.with_suffix(".pdf")
+    try:
+        fig.savefig(output_path, dpi=300, facecolor="white", bbox_inches="tight")
+        fig.savefig(pdf_path, facecolor="white", bbox_inches="tight")
+        print(f"Wrote PDF: {pdf_path}")
+        return output_path
+    except OSError as exc:
+        for n in range(1, 100):
+            alt = output_path.with_name(f"{output_path.stem}_{n}{output_path.suffix}")
+            if alt.exists():
+                continue
+            alt_pdf = alt.with_suffix(".pdf")
+            fig.savefig(alt, dpi=300, facecolor="white", bbox_inches="tight")
+            fig.savefig(alt_pdf, facecolor="white", bbox_inches="tight")
+            print(f"{output_path.name} was locked ({exc}); wrote {alt.name} instead.")
+            print(f"Wrote PDF: {alt_pdf}")
+            return alt
+        raise
+
+
+def _panel_letter(ax, letter):
+    ax.text(
+        -0.10, 1.05, letter,
+        transform=ax.transAxes,
+        fontsize=19, fontweight="bold", color="#333333",
+        ha="left", va="bottom",
+    )
+
+
+def write_regulation_six_panel(Next_Conditions, full_time, plot_time, plot_slice, index, output_path):
+    """The regulation figure: afferents, efferents and the four effector groups.
+
+    These six panels used to be six separate `plt.subplots()` blocks that were
+    uncommented one at a time and saved by hand. Same traces, same PAPER_COLORS,
+    now drawn onto one 2x3 canvas and written to `output_path`.
+
+    Panels A, B and F run from t = 0 so the start-up transient is visible; C, D
+    and E use `plot_time`, which drops the first PLOT_TRIM_SECONDS.
+    """
+    plt.rcParams.update(PAPER_PLOT_RC)
+    fig, axes = plt.subplots(2, 3, figsize=(19.5, 9.6))
+
+    # A - afferent inputs
+    ax = axes[0, 0]
+    _raw_trace(
+        ax,
+        full_time,
+        Next_Conditions["f_ab"][:index],
+        "_nolegend_",
+        PAPER_COLORS["red"],
+        max_points=None,
+        lw=0.6,
+        alpha=0.28,
+        zorder=1,
+    )
+    _beat_averaged_trace(
+        ax,
+        full_time,
+        Next_Conditions["f_ab"][:index],
+        Next_Conditions["phi"][:index],
+        "Baroreceptor firing (beat average)",
+        PAPER_COLORS["red"],
+    )
+    _binned_band(ax, full_time, Next_Conditions["f_ap"][:index], "Lung stretch receptor firing", PAPER_COLORS["purple"])
+    _binned_band(ax, full_time, Next_Conditions["f_ac"][:index], "Chemoreceptor firing", PAPER_COLORS["teal"])
+    _raw_trace(ax, full_time, Next_Conditions["Nt"][:index], "Respiratory neuromuscular drive", PAPER_COLORS["blue"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Firing rate (spikes/s)")
+    # Pinned just below the top-right corner so the peak of the baroreceptor
+    # band stays visible behind the legend box.
+    apply_paper_axis_style(
+        ax,
+        legend_kwargs={"loc": "upper right", "bbox_to_anchor": (1.0, 0.88)},
+    )
+    _panel_letter(ax, "A")
+
+    # B - efferent outputs
+    ax = axes[0, 1]
+    _binned_band(ax, full_time, Next_Conditions["f_sv"][:index], "Venous Volume\nSympathetic Activity", PAPER_COLORS["red"])
+    _binned_band(ax, full_time, Next_Conditions["f_sh"][:index], "HR & Contractility\nSympathetic Activity", PAPER_COLORS["purple"])
+    _binned_band(ax, full_time, Next_Conditions["f_sp"][:index], "Peripheral Resistance\nSympathetic Activity", PAPER_COLORS["teal"])
+    _binned_band(ax, full_time, Next_Conditions["f_v"][:index], "Vagal Activity", PAPER_COLORS["blue"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Firing rate (spikes/s)")
+    apply_paper_axis_style(ax)
+    _panel_letter(ax, "B")
+
+    # C - stressed volumes
+    ax = axes[0, 2]
+    _binned_band(ax, plot_time, Next_Conditions["V_sv"][plot_slice], "Splanchnic V$_{Stressed}$", PAPER_COLORS["red"])
+    _binned_band(ax, plot_time, Next_Conditions["V_ev"][plot_slice], "Extrasplanchnic V$_{Stressed}$", PAPER_COLORS["purple"])
+    _binned_band(ax, plot_time, Next_Conditions["V_amv"][plot_slice], "Active Muscle V$_{Stressed}$", PAPER_COLORS["teal"])
+    _binned_band(ax, plot_time, Next_Conditions["V_rmv"][plot_slice], "Resting V$_{Stressed}$", PAPER_COLORS["blue"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Volume (mL)")
+    apply_paper_axis_style(ax)
+    _panel_letter(ax, "C")
+
+    # D - peripheral resistances
+    ax = axes[1, 0]
+    _binned_band(ax, plot_time, Next_Conditions["R_hp"][plot_slice], "Coronary R$_{Peripheral}$", PAPER_COLORS["red"])
+    _binned_band(ax, plot_time, Next_Conditions["R_rmp"][plot_slice], "Resting Muscle R$_{Peripheral}$", PAPER_COLORS["orange"])
+    _binned_band(ax, plot_time, Next_Conditions["R_bp"][plot_slice], "Brain R$_{Peripheral}$", PAPER_COLORS["green"])
+    _binned_band(ax, plot_time, Next_Conditions["R_sp"][plot_slice], "Splanchnic R$_{Peripheral}$", PAPER_COLORS["teal"])
+    _binned_band(ax, plot_time, Next_Conditions["R_amp"][plot_slice], "Active Muscle R$_{Peripheral}$", PAPER_COLORS["blue"])
+    _binned_band(ax, plot_time, Next_Conditions["R_ep"][plot_slice], "Extrasplanchnic R$_{Peripheral}$", PAPER_COLORS["purple"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel(r"Resistance (mmHg$\cdot$s/ml)")
+    apply_paper_axis_style(ax)
+    _panel_letter(ax, "D")
+
+    # E - heart rate and max elastances (twin axis)
+    ax = axes[1, 1]
+    _raw_trace(ax, plot_time, 60 * Next_Conditions["HR"][plot_slice], "Heart Rate", PAPER_COLORS["red"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Heart Rate (bpm)")
+    apply_paper_axis_style(ax, show_legend=False)
+    _panel_letter(ax, "E")
+
+    ax2 = ax.twinx()
+    _binned_band(ax2, plot_time, Next_Conditions["Emax_rv"][plot_slice], "RV Max Elastance", PAPER_COLORS["purple"])
+    _binned_band(ax2, plot_time, Next_Conditions["Emax_lv"][plot_slice], "LV Max Elastance", PAPER_COLORS["teal"])
+    ax2.set_ylabel("Elastance (mmHg/ml)")
+    ax2.grid(False)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["left"].set_visible(False)
+    ax2.spines["right"].set_visible(True)
+    ax2.spines["right"].set_color("#707070")
+    ax2.spines["right"].set_linewidth(1.4)
+    ax2.tick_params(axis="y", colors="#4d4d4d", labelsize=13, width=1.2, length=4)
+    ax2.yaxis.label.set_color("#333333")
+
+    handles1, labels1 = ax.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    style_paper_legend(
+        ax.legend(handles1 + handles2, labels1 + labels2, loc="best", frameon=True)
+    )
+
+    # F - alveolar ventilation
+    ax = axes[1, 2]
+    _binned_band(ax, full_time, 60 * Next_Conditions["VAflow"][:index], "Alveolar Ventilation", PAPER_COLORS["red"])
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Ventilation (L/min)")
+    apply_paper_axis_style(ax)
+    _panel_letter(ax, "F")
+
+    fig.tight_layout(w_pad=2.6, h_pad=2.6)
+    output_path = _savefig_unlocked(fig, output_path)
+    plt.close(fig)
+    print(f"Wrote: {output_path}")
+    return output_path
 
 # First iteration
 # get the first derivative and outputs from all the separated systems
@@ -806,7 +1078,8 @@ if __name__ == "__main__":
 
     plt.rcParams.update(PAPER_PLOT_RC)
     full_time = Next_Conditions["time_history"][:index]
-    plot_start = max(0, index - 1400000)
+    trimmed = np.flatnonzero(full_time >= PLOT_TRIM_SECONDS)
+    plot_start = int(trimmed[0]) if trimmed.size else 0
     plot_slice = slice(plot_start, index)
     plot_time = Next_Conditions["time_history"][plot_slice]
 
@@ -840,129 +1113,11 @@ if __name__ == "__main__":
     i = Next_Conditions["i"].item() % BUFFER_LIMIT
     sorted_times = np.concatenate((Next_Conditions["all_time"][i:], Next_Conditions["all_time"][:i]))
 
-    # fig, ax1 = plt.subplots()
-    # ax1.plot(full_time, Next_Conditions["f_sv"][:index],
-    #          label="Venous Volume\nSympathetic Activity", color=PAPER_COLORS["red"])
-    # ax1.plot(full_time, Next_Conditions["f_sh"][:index],
-    #          label = "HR & Contractility\nSympathetic Activity", color=PAPER_COLORS["purple"])
-    # ax1.plot(full_time, Next_Conditions["f_sp"][:index],
-    #          label = "Peripheral Resistance\nSympathetic Activity", color=PAPER_COLORS["teal"])
-    # ax1.plot(full_time, Next_Conditions["f_v"][:index],
-    #          label="Vagal Activity", color=PAPER_COLORS["blue"])
-    #
-    # ax1.set_xlabel("Time (s)")
-    # ax1.set_ylabel("Firing rate (spikes/s)")
-    # apply_paper_axis_style(ax1)
-    # fig.tight_layout()
-    # plt.show()
-
-
-
-    # fig, ax1 = plt.subplots()
-    # ax1.plot(full_time, Next_Conditions["f_ab"][:index], label="Baroreceptor firing",
-    #          color=PAPER_COLORS["red"])
-    # ax1.plot(full_time, Next_Conditions["f_ap"][:index],
-    #          label="Lung stretch receptor firing", color=PAPER_COLORS["purple"])
-    # ax1.plot(full_time, Next_Conditions["f_ac"][:index], label="Chemoreceptor firing",
-    #          color=PAPER_COLORS["teal"])
-    # ax1.plot(full_time, Next_Conditions["Nt"][:index],
-    #          label="Respiratory neuromuscular drive", color=PAPER_COLORS["blue"])
-    # ax1.set_xlabel("Time (s)")
-    # ax1.set_ylabel("Firing rate (spikes/s)")
-    # apply_paper_axis_style(ax1)
-    # fig.tight_layout()
-    # plt.show()
-
-    # fig, ax1 = plt.subplots()
-    # ax1.plot(plot_time, Next_Conditions["V_sv"][plot_slice],
-    #          label="Splanchnic V$_{Stressed}$", color=PAPER_COLORS["red"])
-    # ax1.plot(plot_time, Next_Conditions["V_ev"][plot_slice],
-    #          label="Extrasplanchnic V$_{Stressed}$", color=PAPER_COLORS["purple"])
-    # ax1.plot(plot_time, Next_Conditions["V_amv"][plot_slice],
-    #          label="Active Muscle V$_{Stressed}$", color=PAPER_COLORS["teal"])
-    # ax1.plot(plot_time, Next_Conditions["V_rmv"][plot_slice],
-    #          label="Resting V$_{Stressed}$", color=PAPER_COLORS["blue"])
-    #
-    # ax1.set_ylabel("Volume (mL)")
-    # ax1.set_xlabel("Time (s)")
-    # apply_paper_axis_style(ax1)
-    # fig.tight_layout()
-    # plt.show()
-
-    # fig, ax1 = plt.subplots()
-    # ax1.plot(plot_time, Next_Conditions["R_hp"][plot_slice],
-    #          label="Coronary R$_{Peripheral}$", color=PAPER_COLORS["red"])
-    # ax1.plot(plot_time, Next_Conditions["R_rmp"][plot_slice],
-    #          label="Resting Muscle R$_{Peripheral}$", color=PAPER_COLORS["orange"])
-    # ax1.plot(plot_time, Next_Conditions["R_bp"][plot_slice],
-    #          label="Brain R$_{Peripheral}$", color=PAPER_COLORS["green"])
-    # ax1.plot(plot_time, Next_Conditions["R_sp"][plot_slice],
-    #          label="Splanchnic R$_{Peripheral}$", color=PAPER_COLORS["teal"])
-    # ax1.plot(plot_time, Next_Conditions["R_amp"][plot_slice],
-    #          label="Active Muscle R$_{Peripheral}$", color=PAPER_COLORS["blue"])
-    # ax1.plot(plot_time, Next_Conditions["R_ep"][plot_slice],
-    #          label="Extrasplanchnic R$_{Peripheral}$", color=PAPER_COLORS["purple"])
-    #
-    #
-    # ax1.set_ylabel(r"Resistance (mmHg$\cdot$s/ml)")
-    # ax1.set_xlabel("Time (s)")
-    # apply_paper_axis_style(ax1)
-    # fig.tight_layout()
-    # plt.show()
-    #
-    # fig, ax1 = plt.subplots()
-    # ax1.plot(plot_time, 60 * Next_Conditions["HR"][plot_slice],
-    #          label="Heart Rate", color=PAPER_COLORS["red"])
-    # ax1.set_xlabel("Time (s)")
-    # ax1.set_ylabel("Heart Rate (bpm)")
-    # apply_paper_axis_style(ax1, show_legend=False)
-    #
-    # ax2 = ax1.twinx()
-    # ax2.plot(plot_time, Next_Conditions["Emax_rv"][plot_slice],
-    #          label="RV Max Elastance", color=PAPER_COLORS["purple"])
-    # ax2.plot(plot_time, Next_Conditions["Emax_lv"][plot_slice],
-    #          label="LV Max Elastance", color=PAPER_COLORS["teal"])
-    #
-    # ax2.set_ylabel("Elastance (mmHg/ml)")
-    # ax2.grid(False)
-    # ax2.spines["top"].set_visible(False)
-    # ax2.spines["left"].set_visible(False)
-    # ax2.spines["right"].set_visible(True)
-    # ax2.spines["right"].set_color("#707070")
-    # ax2.spines["right"].set_linewidth(1.4)
-    # ax2.tick_params(axis="y", colors="#4d4d4d", labelsize=13, width=1.2, length=4)
-    # ax2.yaxis.label.set_color("#333333")
-    #
-    # handles1, labels1 = ax1.get_legend_handles_labels()
-    # handles2, labels2 = ax2.get_legend_handles_labels()
-    # style_paper_legend(
-    #     ax1.legend(handles1 + handles2, labels1 + labels2,
-    #                loc="best", frameon=True)
-    # )
-    # fig.tight_layout()
-    #
-    # plt.show()
-
-    t1 = Next_Conditions["TI"][:index]
-    Breath_time = 1 / Next_Conditions["BF"][:index]
-    t2 = Breath_time - t1
-    # Minute_Ventilation = 60 * (Next_Conditions["VAflow"][index - 1400000:index] + t1 / (t1 + t2))
-    VD = new_params["GV_dead"] * Next_Conditions["VAflow"][:index] + new_params["V0_dead"]
-    VDflow = (1 / (t1 + t2)) * VD
-    Minute_Ventilation = (Next_Conditions["VAflow"][:index] + VDflow) * 60
-
-    fig, ax1 = plt.subplots()
-    # ax1.plot(Next_Conditions["time_history"][:index], Minute_Ventilation, label="Minute Ventilation", color="r")
-
-    ax1.set_xlabel("Time (s)")
-    ax1.set_ylabel("Ventilation (L/min)")
-    # ax1.grid(True)
-    # # plt.show()
-    # ax2 = ax1.twinx()
-    ax1.plot(full_time, 60 * Next_Conditions["VAflow"][:index],
-             label="Alveolar Ventilation", color=PAPER_COLORS["red"])
-    apply_paper_axis_style(ax1)
-    fig.tight_layout()
-    # ax2.tick_params(axis='y', labelcolor="k")
-    # ax2.legend(loc="upper right")
-    plt.show()
+    write_regulation_six_panel(
+        Next_Conditions,
+        full_time,
+        plot_time,
+        plot_slice,
+        index,
+        REGULATION_PANEL_OUTPUT,
+    )

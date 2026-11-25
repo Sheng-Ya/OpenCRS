@@ -1,3 +1,8 @@
+from check import Parameters as parameter_overrides
+from Entire_system.fixed_params import Parameters as fixed_parameters
+
+_parameters = {**fixed_parameters, **parameter_overrides}
+
 # final paper
 Initial_Conditions = {
     'VT_pa': 79.4388926,
@@ -78,8 +83,9 @@ Initial_Conditions = {
     'PA_O2': 100.286479,
     'PA_CO2': 39.9505623,
     'PCSFCO2': 47.3566432,
-    'MRTO2': 0.00324166667,
-    'MRTCO2': 0.00243333333,
+    # Non-brain tissue metabolic rates (L/s).
+    'MRTO2': _parameters['MRO2'] - _parameters['MO2_bp'] / 1000,
+    'MRTCO2': _parameters['MRCO2'] - _parameters['MRBCO2'],
     'CTO2': 0.00131779094,
     'CvtCO2': 0.512945373,
     'CBO2': 0.00107373317,

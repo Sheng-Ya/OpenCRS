@@ -33,6 +33,7 @@ and is **not** needed to reproduce the paper.
 | `Entire_system/DGSM_Union_Paper_Final_50/`, `DGSM_Union_Paper_Longer_Delay/`, `DGSM_Union/`, `DGSM_Pericardium/` | Earlier union-calibration variants, kept for provenance |
 | `Entire_system/DGSM_Exercise_Paper/`, `DGSM_Exercise_Paper_Final_20/` | Exercise-only calibration variants |
 | `Entire_system/Union_Calibration/`, `Plot_abstract/` | Supporting calibration and figure scripts |
+| `Entire_system/Fitting_exercise_MRI/` | Participant-specific MRI calibration proposal, acquisition-protocol notes, and literature-informed target uncertainties; see its [README](Entire_system/Fitting_exercise_MRI/README.md) |
 | Root `.py` files | The original single-file model implementation that the `Entire_system` version grew out of |
 | `Just Resp/`, `Reduced/` | Respiratory-only and reduced-order model experiments |
 
